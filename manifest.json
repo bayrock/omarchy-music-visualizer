@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "bayrock.hacker-viz",
+  "name": "Hacker Viz",
+  "version": "1.0.0",
+  "author": "shojo.me",
+  "license": "MIT",
+  "description": "A \"hacker terminal\" audio visualizer (spectrogram, hex dump, bars, waveform) drawn in your Omarchy theme colors, fading live when the theme changes.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Panel.qml"
+  }
+}
