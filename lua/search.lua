@@ -91,6 +91,8 @@ local function draw_overlay()
   local k = (d.w - d.ml - d.mr) / 1920
   overlay.res_x, overlay.res_y = d.w, d.h
   local function at(x, y) return ("\\pos(%d,%d)"):format(d.ml + x * k, d.mt + y * k) end
+  -- the pause sign sits in the middle of the window (dy: canvas pixels below it)
+  local function mid(dy) return ("\\pos(%d,%d)"):format(d.w / 2, d.h / 2 + dy * k) end
   local function fs(n) return ("\\fs%d"):format(math.max(1, n * k)) end
   local function bord(n) return ("\\bord%.1f"):format(n * k) end
   local font = "\\fnJetBrainsMono Nerd Font\\shad0"
@@ -102,9 +104,9 @@ local function draw_overlay()
       :format(at(22, 12), fs(25), accent, font, ass_text(prompt_line))
   end
   ev[#ev + 1] = ("{\\an5%s%s%s\\1c&H%s&\\3c&H%s&%s}❚❚ PAUSED")
-    :format(at(710, 325), fs(84), bord(8), accent, bg, font)
+    :format(mid(-38), fs(84), bord(8), accent, bg, font)
   ev[#ev + 1] = ("{\\an5%s%s%s\\1c&H%s&\\3c&H%s&%s}[SPACE] resume%s")
-    :format(at(710, 400), fs(28), bord(6), accent, bg, font, typing and "   [ENTER] play search" or "")
+    :format(mid(37), fs(28), bord(6), accent, bg, font, typing and "   [ENTER] play search" or "")
   overlay.data = table.concat(ev, "\n")
   overlay:update()
 end
