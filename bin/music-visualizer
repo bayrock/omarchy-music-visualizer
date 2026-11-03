@@ -19,42 +19,61 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/music-visualizer/config"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/music-visualizer"
 
 usage() {
+  local conf=${CONF/#$HOME/\~} cache=${CACHE/#$HOME/\~}
   cat <<EOF
-$NAME: a hacker-terminal music visualizer in your Omarchy theme colors.
+$NAME: a hacker-terminal music visualizer in your Omarchy colors.
 
 Usage:
-  music-visualizer [SOURCE] [LABEL]        open the visualizer (playing SOURCE),
-                                           or close it if open and no SOURCE given
+  music-visualizer [SOURCE] [LABEL]        open the visualizer (playing SOURCE);
+                                           with no SOURCE, close it if open
   music-visualizer start [SOURCE] [LABEL]  open, replacing a running visualizer
   music-visualizer load SOURCE [LABEL]     switch the open visualizer to SOURCE
   music-visualizer off                     close it
   music-visualizer status                  print "on" or "off"
   music-visualizer retheme                 fade it to the current theme's colors
+  music-visualizer config                  open your settings file (created
+                                           with every option explained)
   music-visualizer help                    show this help (also -h, --help)
 
 SOURCE is a link (YouTube, SoundCloud, Bandcamp... anything yt-dlp plays), a
-local audio file, or search terms (plays the top YouTube result). Without one
-it plays the configured track. LABEL replaces the track title in the header.
+local audio file, search terms (plays the top YouTube result), or "shuffle".
+Without one it plays the configured track, which is shuffle by default. LABEL
+replaces the track title in the header.
+
+Shuffle plays random tracks from a playlist, each once before any repeat, and
+moves on when a track ends. The built-in playlist is "hacker-trance": classic
+trance anthems plus hacker-film soundtrack cuts.
 
 In the window:
   type anything   search: the text appears in the terminal prompt
-    Enter         play the search          Esc       cancel it
+    Enter         play the search (loops it; leaves shuffle)
+    Esc           cancel it
     Backspace     delete a character       Ctrl+W    delete a word
     Ctrl+U        clear                    Ctrl+V    paste (links work too)
+  Tab             shuffle: play a random track (again: skip to another)
   Space           pause / resume           Up/Down   volume
   F11             fullscreen (or double-click; Esc leaves it)
   Ctrl+Q          quit (or your toggle shortcut, or Super+W)
-  Media keys      play/pause works too (needs mpv-mpris, part of Omarchy)
+  Media keys      play/pause, and Next skips in shuffle (needs mpv-mpris,
+                  part of Omarchy)
 
 While a new song loads, the current one keeps playing. If nothing matches,
 the header says so and the current song carries on.
 
-Settings, in $CONF (key = value):
-  track   = what opens by default: a link, file or search terms
-  label   = header text for that track (default: the track's title)
-  palette = theme (default) | green (classic matrix green)
+Settings live in $conf.
+Run "music-visualizer config" to open it. It's plain "name = value" lines,
+each explained in the file:
+  track    = shuffle (default) | search terms | a link | a file
+             what plays when it opens
+  label    = header text for that track (default: the track's real title)
+  playlist = hacker-trance (default) | a YouTube/SoundCloud playlist link |
+             a music folder | a text file with one song per line
+             what shuffle plays
+  palette  = theme (default) | green
+Changes apply the next time it opens.
 
-Songs are cached in $CACHE after the first play.
+Songs are cached in $cache after the first play. The
+least recently played are removed once the cache passes 1 GB.
 EOF
 }
 
@@ -91,12 +110,27 @@ case "$1" in
     # hand a new track to the running visualizer, which switches in place (USR2)
     shift
     [[ -n $1 ]] || { echo "usage: music-visualizer load SOURCE [LABEL]" >&2; exit 2; }
-    found=""
+    found="" cmd=load
+    [[ $1 == shuffle ]] && cmd=shuffle
     while read -r pid d; do
-      printf '%s\n%s\n' "${1//$'\n'/ }" "${2//$'\n'/ }" >"$d/request.tmp" &&
+      printf '%s\n%s\n%s\n' "$cmd" "${1//$'\n'/ }" "${2//$'\n'/ }" >"$d/request.tmp" &&
         mv -f "$d/request.tmp" "$d/request" && kill -USR2 "$pid" && found=1
     done < <(instances)
     [[ -n $found ]] || { echo "$NAME isn't running (start it with: music-visualizer start SOURCE)" >&2; exit 1; }
+    exit 0 ;;
+  config)
+    # create the settings file from the commented template, then open it
+    if [[ ! -e $CONF ]]; then
+      mkdir -p "$(dirname "$CONF")" && cp "$HERE/config.example" "$CONF" &&
+        echo "Created $CONF"
+    fi
+    if [[ -t 1 && -n $EDITOR ]]; then
+      $EDITOR "$CONF" # may carry flags, e.g. "omarchy-launch-editor --inline"
+    elif command -v omarchy >/dev/null; then
+      omarchy launch config editor "$CONF"
+    else
+      echo "Edit $CONF"
+    fi
     exit 0 ;;
   start)
     # explicit start (used by the Omarchy plugin): replace any running visualizer
@@ -115,53 +149,6 @@ if [[ -z $START && -z $1 ]] && running; then pkill -f -- "--title=$TITLE"; exit 
 # for interactive terminal use.
 [[ -t 1 ]] || exec >/dev/null 2>&1 </dev/null
 
-# --- what to play -----------------------------------------------------------------
-# resolve <src> [label]: sets SHOWN (what was asked for), SRC (what mpv plays), LABEL,
-# and KEY (cache key) for a remote source. A cached copy replaces a remote SRC.
-#
-# Audio cache: resolving a YouTube URL costs 2+ s on every launch (more when YouTube
-# rotates its player JS), so the first play streams while a background yt-dlp saves
-# the audio and its title (cache_bg); later plays of the same URL/search start
-# instantly. Clear with: rm -rf ~/.cache/music-visualizer
-resolve() {
-  SRC=$1 LABEL=$2 KEY=""
-  [[ $SRC == "~/"* ]] && SRC="$HOME/${SRC#\~/}"
-  SHOWN=$SRC
-  [[ $SRC == *://* || -e $SRC ]] || SRC="ytdl://ytsearch1:$SRC"
-  [[ -e $SRC ]] && return
-  KEY=$(printf '%s' "$SRC" | sha1sum | cut -c1-16)
-  local cached
-  cached=$(find "$CACHE" -maxdepth 1 -name "$KEY.*" ! -name '*.part' ! -name '*.ytdl' \
-    ! -name '*.title' -size +0 2>/dev/null | head -1)
-  if [[ -n $cached ]]; then
-    SRC=$cached
-    [[ -z $LABEL && -s $CACHE/$KEY.title ]] && LABEL=$(head -1 "$CACHE/$KEY.title")
-  fi
-}
-cache_bg() { # save the remote $SRC (cache key $KEY) in the background
-  pgrep -f -- "music-visualizer-cache/$KEY" >/dev/null && return
-  mkdir -p "$CACHE"
-  setsid -f yt-dlp -q --no-warnings --no-playlist -f bestaudio/best --no-simulate \
-    --print-to-file title "$CACHE/$KEY.title" -o "$CACHE/$KEY.%(ext)s" \
-    --exec "true music-visualizer-cache/$KEY" -- "${SRC#ytdl://}" >/dev/null 2>&1
-}
-
-if [[ -n $1 ]]; then
-  resolve "$1" "$2"
-elif [[ -n $(conf track) ]]; then
-  resolve "$(conf track)" "$(conf label)"
-else
-  resolve "https://www.youtube.com/watch?v=T6hOlik58gg" "Petite Meller — High Forever (Marlon Hoffstadt Remix)"
-fi
-[[ -n $KEY && ! -e $SRC ]] && cache_bg
-# No label yet: show what was asked for, then swap in mpv's media title once known.
-NEED_TITLE=""
-if [[ -z $LABEL ]]; then
-  LABEL=$SHOWN
-  [[ -e $SHOWN ]] && LABEL=$(basename "$SHOWN")
-  NEED_TITLE=1
-fi
-
 RUN=$(mktemp -d "$RUNBASE/music-visualizer.$$.XXXXXXXX") || exit 1
 trap 'kill $HEXPID $TITLEPID $MPVPID 2>/dev/null; stop_load; rm -rf "$RUN"' EXIT
 # make TERM/INT/HUP (e.g. the Omarchy shell stopping the plugin) run the EXIT cleanup too
@@ -177,6 +164,227 @@ ipc_get() { # ipc_get <property> -> its value, empty if unavailable
 atomic() { # atomic <file>: write stdin to a file that drawtext may be reading
   cat >"$1.tmp" && mv -f "$1.tmp" "$1"
 }
+
+# --- what to play -----------------------------------------------------------------
+# resolve <src> [label]: sets SHOWN (what was asked for), SRC (what mpv plays), LABEL,
+# and KEY (cache key) for a remote source. A cached copy replaces a remote SRC.
+#
+# Audio cache: resolving a YouTube URL costs 2+ s on every launch (more when YouTube
+# rotates its player JS), so the first play streams while a background yt-dlp saves
+# the audio and its title (cache_bg); later plays of the same URL/search start
+# instantly. cache_trim keeps it under 1 GB. Clear with: rm -rf ~/.cache/music-visualizer
+resolve() {
+  SRC=$1 LABEL=$2 KEY=""
+  [[ $SRC == "~/"* ]] && SRC="$HOME/${SRC#\~/}"
+  SHOWN=$SRC
+  [[ $SRC == *://* || -e $SRC ]] || SRC="ytdl://ytsearch1:$SRC"
+  [[ -e $SRC ]] && return
+  KEY=$(printf '%s' "$SRC" | sha1sum | cut -c1-16)
+  local cached
+  cached=$(find "$CACHE" -maxdepth 1 -name "$KEY.*" ! -name '*.part' ! -name '*.ytdl' \
+    ! -name '*.title' -size +0 2>/dev/null | head -1)
+  if [[ -n $cached ]]; then
+    SRC=$cached
+    touch -c -- "$cached" # recently played: kept longest by cache_trim
+    [[ -z $LABEL && -s $CACHE/$KEY.title ]] && LABEL=$(head -1 "$CACHE/$KEY.title")
+  fi
+}
+cache_bg() { # save the remote $SRC (cache key $KEY) in the background
+  pgrep -f -- "music-visualizer-cache/$KEY" >/dev/null && return
+  mkdir -p "$CACHE"
+  setsid -f yt-dlp -q --no-warnings --no-playlist -f bestaudio/best --no-simulate \
+    --print-to-file title "$CACHE/$KEY.title" -o "$CACHE/$KEY.%(ext)s" \
+    --exec "true music-visualizer-cache/$KEY" -- "${SRC#ytdl://}" >/dev/null 2>&1
+}
+cache_trim() { # keep the song cache under 1 GB, removing the least recently played
+  local limit=$((1024 * 1024 * 1024)) total=0 size path
+  find "$CACHE" -maxdepth 1 -type f ! -name '*.title' ! -name 'playlist-*' \
+    ! -name '*.part' ! -name '*.ytdl' -printf '%T@ %s %p\n' 2>/dev/null | sort -rn |
+    while read -r _ size path; do
+      total=$((total + size))
+      ((total > limit)) && rm -f -- "$path" "${path%.*}.title"
+    done
+}
+# fallback title for a source without one: search terms as typed, or a file's name
+plain_title() {
+  if [[ -e $SHOWN ]]; then
+    local b
+    b=$(basename "$SHOWN")
+    printf '%s' "${b%.*}"
+  else
+    printf '%s' "$SHOWN"
+  fi
+}
+
+# lookup <src> [label]: find something mpv can play right away -> SRC, LTITLE.
+# A remote source is resolved to its direct stream with yt-dlp (~2 s), which
+# meanwhile starts caching it. Fails if nothing playable was found.
+lookup() {
+  local out url
+  resolve "$1" "$2"
+  LTITLE=$LABEL
+  if [[ ! -e $SRC ]]; then
+    out=$(yt-dlp -q --no-warnings --no-playlist -f bestaudio/best \
+      --print title --print urls -- "${SRC#ytdl://}" 2>/dev/null)
+    url=$(sed -n 2p <<<"$out")
+    [[ $url == http* ]] || return 1
+    LTITLE=${LTITLE:-$(sed -n 1p <<<"$out")}
+    cache_bg
+    SRC=$url
+  fi
+  [[ -n $LTITLE ]] || LTITLE=$(plain_title)
+}
+
+# --- shuffle ------------------------------------------------------------------------
+# Shuffle plays random tracks from a playlist, each once before any repeats (a
+# shuffled "bag" in $RUN/bag). While one track plays, the next is looked up and
+# queued in mpv's playlist, so tracks change without a gap, and Tab or the Next media
+# key (MPRIS playlist-next) skips. $RUN/shuffle flags shuffle mode for search.lua,
+# which reports each move to the queued track ("advance").
+
+playlist_file() { # entries of a playlist text file: skips blank lines and # comments
+  sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d' "$1" 2>/dev/null
+}
+playlist_entries() { # the configured playlist, one source per line
+  local p list out
+  p=$(conf playlist)
+  p=${p:-hacker-trance}
+  [[ $p == "~/"* ]] && p="$HOME/${p#\~/}"
+  [[ $p != */* && -f $HERE/playlists/$p.txt ]] && p="$HERE/playlists/$p.txt"
+  if [[ -d $p ]]; then # a music folder
+    out=$(find -L "$p" -type f \( -iname '*.mp3' -o -iname '*.flac' -o -iname '*.ogg' \
+      -o -iname '*.opus' -o -iname '*.m4a' -o -iname '*.wav' -o -iname '*.aac' \
+      -o -iname '*.webm' \) 2>/dev/null)
+  elif [[ -f $p ]]; then # a text file: searches, links or files, one per line
+    out=$(playlist_file "$p")
+  elif [[ $p == *://* ]]; then # an online playlist, listed once a day
+    list="$CACHE/playlist-$(printf '%s' "$p" | sha1sum | cut -c1-16).txt"
+    if [[ ! -s $list || -n $(find "$list" -mmin +1440 2>/dev/null) ]]; then
+      mkdir -p "$CACHE"
+      yt-dlp -q --no-warnings --flat-playlist --print url -- "$p" >"$list.tmp" 2>/dev/null &&
+        [[ -s $list.tmp ]] && mv -f "$list.tmp" "$list"
+      rm -f "$list.tmp"
+    fi
+    out=$(cat "$list" 2>/dev/null)
+  fi
+  # a playlist that's missing or empty falls back to the built-in one
+  [[ -n $out ]] || out=$(playlist_file "$HERE/playlists/hacker-trance.txt")
+  printf '%s\n' "$out"
+}
+
+shuffle_pick() { # -> "<n>/<total><TAB><source>": the next track from the bag
+  local bag=$RUN/bag entry n
+  if [[ ! -s $bag ]]; then
+    playlist_entries | shuf >"$bag.new"
+    [[ -s $bag.new ]] || { rm -f "$bag.new"; return 1; }
+    # don't start a new round with the track that just played
+    if [[ $(head -1 "$bag.new") == "$(cat "$RUN/lastpick" 2>/dev/null)" && $(wc -l <"$bag.new") -gt 1 ]]; then
+      { tail -n +2 "$bag.new"; head -1 "$bag.new"; } >"$bag.tmp" && mv -f "$bag.tmp" "$bag.new"
+    fi
+    mv -f "$bag.new" "$bag"
+    wc -l <"$bag" >"$RUN/bagsize"
+    echo 0 >"$RUN/bagn"
+  fi
+  entry=$(head -1 "$bag")
+  tail -n +2 "$bag" >"$bag.tmp" && mv -f "$bag.tmp" "$bag"
+  n=$(($(cat "$RUN/bagn") + 1))
+  echo "$n" >"$RUN/bagn"
+  printf '%s\n' "$entry" >"$RUN/lastpick"
+  printf '%s/%s\t%s\n' "$n" "$(cat "$RUN/bagsize")" "$entry"
+}
+
+shuffle_status() { # shuffle_status <n/total> <next title> -> the header's status line
+  local next=$2
+  ((${#next} > 44)) && next="${next:0:43}…"
+  printf '[#] STAGE  SHUFFLE :: track %s :: next: %s' "$1" "$next"
+}
+
+queue_pick() { # queue_pick <loadfile flags>: look up a random track and hand it to mpv
+  local pick _
+  for _ in 1 2 3; do # skip picks that can't be found
+    pick=$(shuffle_pick) || return 1
+    lookup "${pick#*$'\t'}" || continue
+    jq -nc --arg u "$SRC" --arg f "$1" --arg t "$LTITLE" \
+      '{command: {name: "loadfile", url: $u, flags: $f, options: {"force-media-title": $t}}}' |
+      ipc >/dev/null
+    QPOS=${pick%%$'\t'*} QTITLE=$LTITLE
+    return 0
+  done
+  return 1
+}
+
+queue_upcoming() { # queue the track after the current one, and show it in the header
+  local title now
+  title=$(head -1 "$RUN/label" 2>/dev/null)
+  now=$(cat "$RUN/now" 2>/dev/null)
+  if queue_pick append-play; then
+    printf '%s\t%s\n' "$QPOS" "$QTITLE" >"$RUN/upnext"
+    write_labels "$title" "$(shuffle_status "$now" "$QTITLE")"
+  else
+    rm -f "$RUN/upnext"
+    write_labels "$title" "$(shuffle_status "$now" "(lookup failed: Tab to retry)")"
+  fi
+}
+
+shuffle_start() { # enter shuffle (or reshuffle): a random track now, the next queued
+  local old
+  old=$(head -1 "$RUN/label" 2>/dev/null)
+  write_labels "$old" "[~] SHUFFLE picking a track"
+  : >"$RUN/shuffle"
+  rm -f "$RUN/upnext" "$RUN/loadfail"
+  printf '%s\n' '{"command":["set_property","loop-file","no"]}' | ipc >/dev/null
+  if ! queue_pick replace; then
+    rm -f "$RUN/shuffle"
+    printf '%s\n' '{"command":["set_property","loop-file","inf"]}' | ipc >/dev/null
+    write_labels "$old" "[!] ERROR  shuffle: nothing in the playlist could be found"
+    return
+  fi
+  printf '%s\n' "$QPOS" >"$RUN/now"
+  write_labels "$QTITLE" "$(shuffle_status "$QPOS" "resolving…")"
+  set_title "$QTITLE"
+  queue_upcoming
+}
+
+shuffle_advance() { # mpv moved on to the queued track (song ended, Tab or Next key)
+  [[ -e $RUN/shuffle && -s $RUN/upnext ]] || return
+  local pos title
+  IFS=$'\t' read -r pos title <"$RUN/upnext"
+  rm -f "$RUN/upnext"
+  printf '%s\n' '{"command":["playlist-clear"]}' | ipc >/dev/null # drop played tracks
+  printf '%s\n' "$pos" >"$RUN/now"
+  write_labels "$title" "$(shuffle_status "$pos" "resolving…")"
+  set_title "$title"
+  queue_upcoming
+}
+
+# --- the first track ----------------------------------------------------------------
+if [[ -n $1 ]]; then
+  first=$1 first_label=$2
+elif [[ -n $(conf track) ]]; then
+  first=$(conf track) first_label=$(conf label)
+else
+  first=shuffle first_label=""
+fi
+SHUFFLE="" NOWPOS="" NEED_TITLE=""
+if [[ $first == shuffle ]] && pick=$(shuffle_pick); then
+  SHUFFLE=1 NOWPOS=${pick%%$'\t'*}
+  resolve "${pick#*$'\t'}" ""
+  if [[ -z $LABEL ]]; then
+    LABEL=$(plain_title)
+    [[ $SHOWN == *://* ]] && NEED_TITLE=1 # a bare link: use mpv's title once known
+  fi
+else
+  [[ $first == shuffle ]] && first="https://www.youtube.com/watch?v=T6hOlik58gg"
+  resolve "$first" "$first_label"
+  # No label yet: show what was asked for, then swap in mpv's media title once known.
+  if [[ -z $LABEL ]]; then
+    LABEL=$SHOWN
+    [[ -e $SHOWN ]] && LABEL=$(basename "$SHOWN")
+    NEED_TITLE=1
+  fi
+fi
+[[ -n $KEY && ! -e $SRC ]] && cache_bg
+(cache_trim) &
 
 # --- colors -----------------------------------------------------------------------
 # The graph below draws a color-neutral *mask*: red channel = accent layers (prompt,
@@ -254,8 +462,15 @@ write_labels() { # write_labels <label> [status line]
     "[>] INFO   payload :: $1" \
     "${2:-[#] STAGE  CHAIN ACTIVE :: spectral exfiltration :: loop=inf}" | atomic "$RUN/header.txt"
 }
-write_labels "$LABEL"
-printf '%s\n' "RCE R1TU4L ST4RT3D -> 0P3N1NG P0RT4L        :: type to search" | atomic "$RUN/footer.idle"
+if [[ -n $SHUFFLE ]]; then
+  : >"$RUN/shuffle"
+  printf '%s\n' "$NOWPOS" >"$RUN/now"
+  write_labels "$LABEL" "$(shuffle_status "$NOWPOS" "resolving…")"
+else
+  write_labels "$LABEL"
+fi
+printf '%s\n' "RCE R1TU4L ST4RT3D -> 0P3N1NG P0RT4L      :: type to search :: [TAB] shuffle" |
+  atomic "$RUN/footer.idle"
 atomic "$RUN/footer.txt" <"$RUN/footer.idle"
 
 set_title() { # window title, plus the track title mpv reports over MPRIS (media widgets)
@@ -274,36 +489,27 @@ title_watch() {
   done
   t=$(ipc_get media-title)
   [[ -n $t && $t != "$SHOWN" && $t != ytsearch* && $t != *://* ]] || return
-  write_labels "$t"
+  write_labels "$t" "$(sed -n 3p "$RUN/header.txt")" # keep the status line
   set_title "$t"
 }
 
 # --- switching tracks in place (search box, or `music-visualizer load`) ------------
 # load_track <src> [label]: resolve the new source while the current song keeps
-# playing, then swap mpv over to it. search.lua falls back to the previous track if
-# mpv can't play the new one, and flags that with $RUN/loadfail.
+# playing, then swap mpv over to it (looping, which also leaves shuffle). search.lua
+# falls back to the previous track if mpv can't play the new one, and flags that
+# with $RUN/loadfail.
 load_track() {
-  local q=$1 old title url out _
+  local q=$1 old title _
   old=$(head -1 "$RUN/label" 2>/dev/null)
   write_labels "$old" "[~] SEARCH resolving :: $q"
-  resolve "$q" "$2"
-  title=$LABEL
-  if [[ ! -e $SRC ]]; then
-    # look it up first, so the old song plays on during the ~2 s this takes
-    out=$(yt-dlp -q --no-warnings --no-playlist -f bestaudio/best \
-      --print title --print urls -- "${SRC#ytdl://}" 2>/dev/null)
-    url=$(sed -n 2p <<<"$out")
-    if [[ $url != http* ]]; then
-      write_labels "$old" "[!] ERROR  no match :: $q"
-      return
-    fi
-    title=${title:-$(sed -n 1p <<<"$out")}
-    cache_bg
-    SRC=$url
+  if ! lookup "$q" "$2"; then
+    write_labels "$old" "[!] ERROR  no match :: $q"
+    return
   fi
-  [[ -n $title ]] || title=$(basename "$SHOWN")
-  rm -f "$RUN/loadfail"
-  jq -nc --arg u "$SRC" '{command: ["loadfile", $u, "replace"]}' | ipc >/dev/null
+  title=$LTITLE
+  rm -f "$RUN/loadfail" "$RUN/shuffle" "$RUN/upnext"
+  jq -nc --arg u "$SRC" '{command: ["set_property", "loop-file", "inf"]}, {command: ["loadfile", $u, "replace"]}' |
+    ipc >/dev/null
   for _ in $(seq 1 80); do
     sleep 0.25
     if [[ -e $RUN/loadfail ]]; then
@@ -319,23 +525,39 @@ load_track() {
   write_labels "$old" "[!] ERROR  timed out :: $q"
 }
 
-stop_load() { # cancel an in-progress load_track (and its yt-dlp lookup)
+stop_load() { # cancel an in-progress track switch (and its yt-dlp lookup)
   [[ -n $LOADPID ]] || return
   pkill -P "$LOADPID" 2>/dev/null
   kill "$LOADPID" 2>/dev/null
   LOADPID=""
 }
 
-on_load() { # USR2: a new track was requested in $RUN/request
-  local req=()
+# USR2: a request in $RUN/request, three lines: <command> <source> <label>, from
+# `music-visualizer load` or search.lua. Commands:
+#   load     play <source> (typed search, summon, play)
+#   shuffle  start shuffle, or skip to a new random track (Tab)
+#   advance  mpv moved on to the queued shuffle track
+on_load() {
+  local req=() cmd
   [[ -s $RUN/request ]] && mapfile -t req <"$RUN/request"
   rm -f "$RUN/request"
-  [[ -n ${req[0]} ]] || return
+  cmd=${req[0]}
+  case $cmd in
+    load) [[ -n ${req[1]} ]] || return ;;
+    shuffle | advance) ;;
+    *) return ;;
+  esac
+  # a song you searched for wins over shuffle moving on in the meantime
+  if [[ $cmd == advance && $LOADKIND == load ]] && kill -0 "$LOADPID" 2>/dev/null; then return; fi
   [[ -n $TITLEPID ]] && kill "$TITLEPID" 2>/dev/null
   TITLEPID=""
   stop_load
-  load_track "${req[0]}" "${req[1]}" &
-  LOADPID=$!
+  case $cmd in
+    load) load_track "${req[1]}" "${req[2]}" & ;;
+    shuffle) shuffle_start & ;;
+    advance) shuffle_advance & ;;
+  esac
+  LOADPID=$! LOADKIND=$cmd
 }
 
 # --- mask graph (colors are applied afterwards by @theme) --------------------------
@@ -384,6 +606,9 @@ MEMCAP=()
 systemd-run --user --scope -q true >/dev/null 2>&1 &&
   MEMCAP=(systemd-run --user --scope -q -p MemoryMax=1500M -p MemorySwapMax=0 --)
 EXTRA=()
+# a single track loops; shuffle moves on to the next one when a track ends
+LOOP=inf
+[[ -n $SHUFFLE ]] && LOOP=no
 # MPRIS (Omarchy ships mpv-mpris): media keys and the shell's media widgets see the
 # visualizer. --no-config skips system scripts, so load it explicitly when present.
 for so in /usr/lib/mpv-mpris/mpris.so /etc/mpv/scripts/mpris.so; do
@@ -397,7 +622,7 @@ done
 # keys and helper scripts are off too: search.lua defines every key (typing any
 # letter searches) and keeps mpv idle-safe when a new track fails to load.
 MVIZ_RUN=$RUN MVIZ_PID=$$ MVIZ_HOST=$HOST \
-"${MEMCAP[@]}" mpv --no-config --msg-level=all=info --loop-file=inf \
+"${MEMCAP[@]}" mpv --no-config --msg-level=all=info --loop-file="$LOOP" --prefetch-playlist=yes \
   --ytdl-format=bestaudio/best --force-window=immediate --idle=yes \
   --title="$TITLE $LABEL" --keep-open=no --osc=no \
   --no-input-default-bindings --load-console=no --load-commands=no --load-select=no \
@@ -410,6 +635,17 @@ MVIZ_RUN=$RUN MVIZ_PID=$$ MVIZ_HOST=$HOST \
 MPVPID=$!
 TITLEPID=""
 if [[ -n $NEED_TITLE ]]; then title_watch & TITLEPID=$!; fi
+LOADPID="" LOADKIND=""
+if [[ -n $SHUFFLE ]]; then # queue the second track once the first is playing
+  (
+    for _ in $(seq 1 120); do
+      sleep 0.25
+      [[ -n $(ipc_get playback-time) ]] && break
+    done
+    queue_upcoming
+  ) &
+  LOADPID=$! LOADKIND=shuffle
+fi
 
 # mpv runs in the background so signals (theme change, new track) can be handled
 # while it plays; `wait` returns early on a signal, so loop until mpv exits.

@@ -1,0 +1,32 @@
+# Music Visualizer settings
+#
+# One setting per line, written as:  name = value
+# Lines starting with # are notes and are ignored. Delete a line (or put a # in
+# front of it) to go back to the default. Changes apply the next time the
+# visualizer opens.
+
+
+# What plays when it opens. One of:
+#   shuffle                   random tracks from the playlist below (default)
+#   a song to search for      daft punk around the world
+#   a link                    https://www.youtube.com/watch?v=...
+#   a file on your computer   ~/Music/track.flac
+track = shuffle
+
+# Header text for that track. Optional: without it, the track's real title shows.
+#label = My favorite song
+
+# What shuffle plays. One of:
+#   hacker-trance             the built-in mix: trance anthems + hacker-film
+#                             soundtracks (default)
+#   a playlist link           https://www.youtube.com/playlist?list=...
+#                             (YouTube, SoundCloud, anything yt-dlp reads)
+#   a music folder            ~/Music
+#   a text file               ~/my-playlist.txt
+#                             (one song per line: search terms, a link or a file)
+playlist = hacker-trance
+
+# Colors. One of:
+#   theme                     follow your Omarchy theme, live (default)
+#   green                     classic matrix green
+palette = theme

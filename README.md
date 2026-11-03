@@ -9,12 +9,15 @@ themes while it plays and the colors fade smoothly to the new palette.
 
 ![Music Visualizer in the Matte Black theme](preview.png)
 
+- **Shuffle out of the box:** opens into a hacker-trance mix (trance anthems
+  plus Hackers and Matrix soundtrack cuts). Press <kbd>Tab</kbd> to skip, or
+  shuffle your own playlist or music folder.
 - **Type to change the song:** start typing in the window and your search
   appears in the hacker prompt. Press <kbd>Enter</kbd> and it plays.
 - **Plays almost anything:** a YouTube or SoundCloud link, a local audio file,
-  or plain search terms. Each track loops until you close it.
-- **Works with your media keys:** play/pause controls it, and Omarchy's media
-  widgets show the current track.
+  or plain search terms. A song you pick loops until you change it.
+- **Works with your media keys:** play/pause controls it, Next skips in
+  shuffle, and Omarchy's media widgets show the current track.
 - **Uses your theme:** colors come from your Omarchy theme and update live
   when you switch.
 - **Fast to reopen:** songs are cached after the first play, so a repeat
@@ -39,9 +42,9 @@ o.bind("SUPER + CTRL + SHIFT + V", "Music visualizer", "omarchy-shell shell togg
 EOF
 ```
 
-Press it to start the visualizer, and press it again to close it. The first
-launch streams the default track. After that, it starts almost instantly.
-To change the song, just start typing in the window (see below).
+Press it to start the visualizer, and press it again to close it. It opens
+shuffling the built-in mix, and moves to a new track each time one ends. Press
+<kbd>Tab</kbd> to skip, or just start typing to search for a song (see below).
 
 > Like every Omarchy plugin, this runs unsandboxed with your user's
 > permissions. The code is short (`Panel.qml`, `bin/music-visualizer` and
@@ -56,6 +59,29 @@ it's playing:
 ```jsonc
 "trigger.toggle.music-visualizer": {"icon":"󰐰","label":"Music Visualizer","action":"omarchy-shell shell toggle bayrock.music-visualizer '{}'","checked":"[[ $(omarchy-shell shell call bayrock.music-visualizer status '') == on ]]"},
 ```
+
+## Shuffle
+
+The visualizer opens in shuffle: random tracks from a playlist, each played
+once before any repeats. The header shows where you are and what's coming:
+
+```
+[#] STAGE  SHUFFLE :: track 7/40 :: next: Orbital - Halcyon On and On
+```
+
+- <kbd>Tab</kbd> or the Next media key skips to the next track. The next one
+  is looked up while the current one plays, so there's no gap.
+- Searching for a song (below) leaves shuffle and loops your song.
+  <kbd>Tab</kbd> goes back to shuffle.
+- The built-in playlist, **hacker-trance**, is classic trance anthems (ATB,
+  Paul van Dyk, Gouryella, System F...) plus hacker-film soundtrack cuts
+  (Orbital, Propellerheads, Juno Reactor, Daft Punk's Tron...). See
+  [`playlists/hacker-trance.txt`](playlists/hacker-trance.txt).
+
+To shuffle your own music, set `playlist` in your [settings](#settings) to a
+YouTube or SoundCloud playlist link, a music folder, or a text file with one
+song per line (search terms, a link or a file). If it can't be read, the
+built-in playlist plays instead.
 
 ## Play your own music
 
@@ -80,17 +106,19 @@ because they're cached.
 | Key | What it does |
 |---|---|
 | any letter, number or symbol | start a search (it types into the prompt) |
-| <kbd>Enter</kbd> | play what you typed |
+| <kbd>Enter</kbd> | play what you typed (loops it, leaving shuffle) |
 | <kbd>Esc</kbd> | cancel the search (or leave fullscreen) |
 | <kbd>Backspace</kbd> · <kbd>Ctrl</kbd>+<kbd>W</kbd> · <kbd>Ctrl</kbd>+<kbd>U</kbd> | delete a character · a word · everything |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste (links work too) |
+| <kbd>Tab</kbd> | shuffle: play a random track, or skip to the next one |
 | <kbd>Space</kbd> | pause / resume (when you're not typing) |
 | <kbd>↑</kbd> / <kbd>↓</kbd> | volume |
 | <kbd>F11</kbd> or double-click | fullscreen |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | quit (your shortcut and <kbd>Super</kbd>+<kbd>W</kbd> also close it) |
 
 Since typing searches, letters aren't shortcuts. That's why fullscreen and
-quit use <kbd>F11</kbd> and <kbd>Ctrl</kbd>+<kbd>Q</kbd>.
+quit use <kbd>F11</kbd> and <kbd>Ctrl</kbd>+<kbd>Q</kbd>. Your keyboard's media
+keys work too: play/pause, and Next skips in shuffle.
 
 It opens as a floating, centered window, Omarchy's default for media windows.
 
@@ -107,6 +135,9 @@ omarchy-shell shell summon bayrock.music-visualizer '{"src":"https://www.youtube
 
 # a local file, with your own header text
 omarchy-shell shell summon bayrock.music-visualizer '{"src":"~/Music/track.flac","label":"My Track"}'
+
+# shuffle
+omarchy-shell shell summon bayrock.music-visualizer '{"src":"shuffle"}'
 ```
 
 The plugin's script also works directly from a terminal. Run it with `--help`
@@ -117,24 +148,41 @@ for every command and key:
 ```
 
 Its commands are `start`, `load` (switch the open visualizer to a new song),
-`off`, `status` and `retheme`.
+`off`, `status`, `retheme` and `config`.
 
 ## Settings
 
-Create `~/.config/music-visualizer/config` (plain `key = value` lines). This
-keeps your settings out of the plugin folder, so updates never conflict with
-them:
+Everything works without settings. To change something, run:
+
+```bash
+~/.config/omarchy/plugins/bayrock.music-visualizer/bin/music-visualizer config
+```
+
+That creates `~/.config/music-visualizer/config` with every setting explained,
+and opens it in your editor. It lives outside the plugin folder, so updates
+never touch it. It's plain `name = value` lines; put a `#` in front of a line
+to go back to the default:
 
 ```ini
-# what the shortcut plays: a link, file or search terms
-track = https://www.youtube.com/watch?v=...
-# header text for that track (optional: defaults to the track's title)
-label = My favorite song
-# "green" for the classic matrix-green look instead of your theme colors
+# What plays when it opens: shuffle (default), search terms, a link, or a file
+track = shuffle
+
+# Header text for that track (optional: defaults to the track's real title)
+#label = My favorite song
+
+# What shuffle plays: hacker-trance (default), a playlist link, a music folder,
+# or a text file with one song per line
+playlist = hacker-trance
+
+# Colors: theme (follow your Omarchy theme, default) or green (classic matrix)
 palette = theme
 ```
 
-Changes apply the next time the visualizer opens.
+Examples: `track = daft punk around the world` always opens on that song;
+`playlist = ~/Music` shuffles your music folder;
+`playlist = https://www.youtube.com/playlist?list=...` shuffles a YouTube
+playlist (refreshed daily). Changes apply the next time the visualizer opens.
+The full template is [`config.example`](config.example).
 
 ## Update or remove
 
@@ -166,6 +214,13 @@ rm -rf ~/.cache/music-visualizer ~/.config/music-visualizer
   until yt-dlp is updated, and `omarchy update` updates it.
 - **Typing does nothing.** Click the visualizer window first so it has keyboard
   focus.
+- **Shuffle shows `next: (lookup failed: Tab to retry)`.** A track couldn't be
+  found, usually a connection hiccup. Press <kbd>Tab</kbd>. A track that won't
+  play is skipped automatically.
+- **My playlist isn't used.** Check the `playlist` line with
+  `music-visualizer config`. A folder needs audio files in it, and a text
+  file needs one song per line. If it can't be read, the built-in playlist
+  plays instead.
 - **A new song takes a couple of seconds to start.** That's expected the first
   time: it's streamed while it's saved to the cache. Later plays start almost
   instantly.
@@ -177,10 +232,11 @@ rm -rf ~/.cache/music-visualizer ~/.config/music-visualizer
 
 ## Privacy and storage
 
-The default track and any links or searches you play are fetched from their
+Songs, links, searches and playlist links you play are fetched from their
 sites through `yt-dlp`, and the audio is saved under `~/.cache/music-visualizer/`
-(a few MB per song) for fast replays. Local files are played directly and never
-copied. Nothing else leaves your machine.
+(a few MB per song) for fast replays. The cache is capped at 1 GB, and the
+least recently played songs are removed first. Local files are played directly
+and never copied. Nothing else leaves your machine.
 
 ## How it works
 
@@ -198,6 +254,10 @@ copied. Nothing else leaves your machine.
   playing, then switches mpv over. If the new song won't play, `search.lua`
   goes back to the old one. All of this goes through a private per-run
   directory (`mktemp -d`, mode 0700).
+- **Shuffle:** the script keeps a shuffled list of the playlist and queues the
+  next track in mpv's own playlist while the current one plays. `search.lua`
+  tells the script when mpv moves on (track ended, <kbd>Tab</kbd>, or Next), and
+  the script queues the one after.
 - **Media keys:** the script loads Omarchy's `mpv-mpris` add-on, so the
   visualizer shows up as an MPRIS player with the track's real title.
 - **Safety:** mpv runs with `--no-config` (so your personal mpv setup can't
@@ -210,5 +270,6 @@ is optional: it enables the media keys.
 
 ## License
 
-[MIT](LICENSE) © 2026 shojo.me. The default track is streamed from YouTube and
-isn't distributed with this plugin.
+[MIT](LICENSE) © 2026 shojo.me. Music is streamed from YouTube and other
+sites when you play it. None is distributed with this plugin; the playlists
+are just song names.

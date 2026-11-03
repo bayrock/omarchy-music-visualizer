@@ -6,11 +6,15 @@
 -- bin/music-visualizer (request file + SIGUSR2), which looks the song up while the
 -- current one keeps playing and then switches mpv over.
 --
+-- Tab starts shuffle or skips to another random track; in shuffle, this script tells
+-- bin/music-visualizer whenever mpv moves on to the queued next track.
+--
 -- Files in $MVIZ_RUN (a private per-run directory) shared with bin/music-visualizer:
 --   prompt.txt / footer.txt   displayed; owned by this script while typing
 --   prompt.idle / footer.idle what to show when not typing
 --   typing                    present while typing
---   request                   "<source>\n<label>\n" for the next track
+--   request                   "<command>\n<source>\n<label>\n": load | shuffle | advance
+--   shuffle                   present while in shuffle mode
 --   loadfail                  written when a new track failed and the old one resumed
 
 local mp = require "mp"
@@ -88,7 +92,22 @@ local function stop_typing()
   put("footer.txt", slurp("footer.idle") or "")
 end
 
+local function exists(name)
+  local f = io.open(path(name), "r")
+  if f then f:close() end
+  return f ~= nil
+end
+
+-- hand a command to bin/music-visualizer (see the request file above)
+local function request(cmd, src)
+  put("request", cmd .. "\n" .. (src or "") .. "\n\n")
+  mp.command_native_async({ name = "subprocess", args = { "kill", "-USR2", PID },
+    playback_only = false }, function() end)
+end
+
 local function add(s)
+  s = s:gsub("%c", "")
+  if s == "" then return end
   if not typing then start_typing("") end
   text = text .. s
   cursor_on = true
@@ -99,9 +118,19 @@ local function submit()
   local q = text:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
   stop_typing()
   if q == "" then return end
-  put("request", q .. "\n\n")
-  mp.command_native_async({ name = "subprocess", args = { "kill", "-USR2", PID },
-    playback_only = false }, function() end)
+  request("load", q)
+end
+
+-- Tab: skip to the queued track if shuffle has one ready, else (re)start shuffle
+local function shuffle()
+  if typing then return end
+  local pos = mp.get_property_number("playlist-pos", 0)
+  local count = mp.get_property_number("playlist-count", 0)
+  if exists("shuffle") and count > pos + 1 then
+    mp.command("playlist-next")
+  else
+    request("shuffle")
+  end
 end
 
 local function paste()
@@ -146,6 +175,7 @@ key("clear", "Ctrl+u", function() if typing then text = ""; render() end end)
 key("delete-word", "Ctrl+w", function()
   if typing then text = text:gsub("%s*[^%s]*$", ""); render() end
 end)
+key("shuffle", "TAB", shuffle)
 key("paste", "Ctrl+v", paste)
 key("paste-alt", "Shift+INS", paste)
 key("escape", "ESC", function()
@@ -159,15 +189,30 @@ key("fullscreen-click", "MBTN_LEFT_DBL", function() mp.command("cycle fullscreen
 key("quit", "Ctrl+q", function() mp.command("quit") end)
 key("close", "CLOSE_WIN", function() mp.command("quit") end)
 
+-- shuffle moved on to the queued track (end of song, Tab, or the Next media key) ----
+mp.register_event("file-loaded", function()
+  if exists("shuffle") and mp.get_property_number("playlist-pos", 0) >= 1 then
+    request("advance")
+  end
+end)
+
 -- a new track that can't be played: go back to the last one that did ---------------
--- (mpv runs with --idle=yes so a failed load doesn't close the window)
+-- (mpv runs with --idle=yes so a failed load doesn't close the window). In shuffle,
+-- try another random track instead, up to 3 times in a row.
 local current, last_good
+local failures = 0
 
 mp.register_event("start-file", function() current = mp.get_property("path") end)
-mp.register_event("playback-restart", function() last_good = current end)
+mp.register_event("playback-restart", function()
+  last_good = current
+  failures = 0
+end)
 mp.register_event("end-file", function(e)
   if e.reason ~= "error" then return end
-  if last_good and last_good ~= current then
+  failures = failures + 1
+  if exists("shuffle") and failures <= 3 then
+    request("shuffle")
+  elseif last_good and last_good ~= current then
     put("loadfail", "")
     mp.commandv("loadfile", last_good, "replace")
   else

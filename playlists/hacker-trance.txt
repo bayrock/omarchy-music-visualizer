@@ -1,0 +1,55 @@
+# Hacker Trance: the built-in shuffle playlist.
+# Classic trance anthems plus cuts from hacker-film soundtracks (Hackers, The Matrix,
+# Tron: Legacy, The Social Network). One track per line, as YouTube search terms
+# ("Artist - Title"), which keep working even when a particular upload disappears.
+# Lines can also be links or local files. Lines starting with # are ignored.
+#
+# To shuffle your own list instead, set `playlist = ...` in
+# ~/.config/music-visualizer/config (see the README).
+
+# --- where it all started: the track from the php2shell clip ---
+# (a link, because searching for it finds a different upload)
+https://www.youtube.com/watch?v=T6hOlik58gg
+
+# --- trance anthems ---
+ATB - 9 PM (Till I Come)
+Paul van Dyk - For an Angel
+Energy 52 - Café del Mar
+Gouryella - Gouryella
+Rank 1 - Airwave
+System F - Out of the Blue
+Darude - Sandstorm
+Robert Miles - Children
+Binary Finary - 1998
+Push - Universal Nation
+Chicane - Saltwater
+Tiësto - Adagio for Strings
+Armin van Buuren - Communication
+Ferry Corsten - Punk
+Three Drives - Greece 2000
+Lange - Follow Me
+Above & Beyond - Sun & Moon
+Oceanlab - Satellite
+Signum - What Ya Got 4 Me
+Marco V - Godd
+Cosmic Gate - Exploration of Space
+Mauro Picotto - Komodo
+Faithless - Insomnia
+Planet Perfecto - Bullet in the Gun
+Agnelli & Nelson - El Niño
+Paul Oakenfold - Ready Steady Go
+
+# --- hacker films ---
+Orbital - Halcyon + On + On
+Underworld - Cowgirl
+The Prodigy - Voodoo People
+Leftfield - Open Up
+Propellerheads - Spybreak!
+Rob Dougan - Clubbed to Death
+The Prodigy - Mindfields
+Lunatic Calm - Leave You Far Behind
+Juno Reactor - Navras
+Juno Reactor - Mona Lisa Overdrive
+Fluke - Zion
+Daft Punk - Derezzed
+Trent Reznor & Atticus Ross - In Motion
