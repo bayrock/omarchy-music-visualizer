@@ -24,7 +24,6 @@ Item {
   // read by the shell's toggle(): open while the visualizer process runs
   readonly property bool opened: viz.running
 
-  property var pendingCommand: null
   // set when the visualizer starts and cleared only when it really exits, so it is
   // still accurate during teardown (when the child Process may already be gone)
   property bool vizAlive: false
@@ -41,10 +40,10 @@ Item {
       if (p.label) cmd.push(String(p.label))
     }
     if (viz.running) {
-      // a new track while one is playing: restart with it
+      // a new track while one is playing: switch to it in place (same window)
       if (cmd.length === 2) return
-      root.pendingCommand = cmd
-      root.close()
+      cmd[1] = "load"
+      Quickshell.execDetached(cmd)
       return
     }
     root.liveScript = root.script
@@ -73,14 +72,7 @@ Item {
   Process {
     id: viz
     onStarted: root.vizAlive = true
-    onExited: {
-      root.vizAlive = false
-      if (root.pendingCommand) {
-        viz.command = root.pendingCommand
-        root.pendingCommand = null
-        viz.running = true
-      }
-    }
+    onExited: root.vizAlive = false
   }
 
   Process {

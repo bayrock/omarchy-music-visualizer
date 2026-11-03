@@ -9,6 +9,8 @@ themes while it plays and the colors fade smoothly to the new palette.
 
 ![Music Visualizer in the Matte Black theme](preview.png)
 
+- **Type to change the song:** start typing in the window and your search
+  appears in the hacker prompt. Press <kbd>Enter</kbd> and it plays.
 - **Plays almost anything:** a YouTube or SoundCloud link, a local audio file,
   or plain search terms. Each track loops until you close it.
 - **Uses your theme:** colors come from your Omarchy theme and update live
@@ -37,6 +39,7 @@ EOF
 
 Press it to start the visualizer, and press it again to close it. The first
 launch streams the default track. After that, it starts almost instantly.
+To change the song, just start typing in the window (see below).
 
 > Like every Omarchy plugin, this runs unsandboxed with your user's
 > permissions. The code is short (`Panel.qml` and `bin/music-visualizer`), so
@@ -54,6 +57,45 @@ it's playing:
 
 ## Play your own music
 
+**Just start typing.** With the visualizer window focused, type a song name.
+Your text appears in the terminal prompt at the top
+(`./php2shell --search "daft punk around the world█"`). Press
+<kbd>Enter</kbd>:
+
+1. The header shows `[~] SEARCH resolving`, and the current song keeps playing
+   while it looks yours up (a couple of seconds).
+2. The new song starts in the same window, and the header and window title
+   show its real title.
+3. If nothing matches, the header shows `[!] ERROR no match` and the current
+   song carries on.
+
+You can also paste a link (<kbd>Ctrl</kbd>+<kbd>V</kbd>), such as a YouTube,
+SoundCloud or Bandcamp URL. Songs you've played before start instantly
+because they're cached.
+
+### Keys in the window
+
+| Key | What it does |
+|---|---|
+| any letter, number or symbol | start a search (it types into the prompt) |
+| <kbd>Enter</kbd> | play what you typed |
+| <kbd>Esc</kbd> | cancel the search (or leave fullscreen) |
+| <kbd>Backspace</kbd> · <kbd>Ctrl</kbd>+<kbd>W</kbd> · <kbd>Ctrl</kbd>+<kbd>U</kbd> | delete a character · a word · everything |
+| <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste (links work too) |
+| <kbd>Space</kbd> | pause / resume (when you're not typing) |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | volume |
+| <kbd>F11</kbd> or double-click | fullscreen |
+| <kbd>Ctrl</kbd>+<kbd>Q</kbd> | quit (your shortcut and <kbd>Super</kbd>+<kbd>W</kbd> also close it) |
+
+Since typing searches, letters aren't shortcuts. That's why fullscreen and
+quit use <kbd>F11</kbd> and <kbd>Ctrl</kbd>+<kbd>Q</kbd>.
+
+It opens as a floating, centered window, Omarchy's default for media windows.
+
+### From scripts or other keybinds
+
+Open the visualizer with a specific song, or switch the open one to it:
+
 ```bash
 # YouTube search: plays the top result
 omarchy-shell shell summon bayrock.music-visualizer '{"src":"daft punk around the world"}'
@@ -65,12 +107,15 @@ omarchy-shell shell summon bayrock.music-visualizer '{"src":"https://www.youtube
 omarchy-shell shell summon bayrock.music-visualizer '{"src":"~/Music/track.flac","label":"My Track"}'
 ```
 
-If a visualizer is already open, it switches to the new track. The header and
-window title show the track's real title once it starts playing.
+The plugin's script also works directly from a terminal. Run it with `--help`
+for every command and key:
 
-**In the window:** <kbd>f</kbd> fullscreen · <kbd>space</kbd> pause ·
-<kbd>9</kbd>/<kbd>0</kbd> volume · <kbd>m</kbd> mute · <kbd>q</kbd> quit.
-It opens as a floating, centered window, Omarchy's default for media windows.
+```bash
+~/.config/omarchy/plugins/bayrock.music-visualizer/bin/music-visualizer --help
+```
+
+Its commands are `start`, `load` (switch the open visualizer to a new song),
+`off`, `status` and `retheme`.
 
 ## Settings
 
@@ -113,10 +158,12 @@ rm -rf ~/.cache/music-visualizer ~/.config/music-visualizer
   `omarchy-shell shell call bayrock.music-visualizer status ''`. If it prints
   `unknown`, the plugin isn't enabled: run
   `omarchy plugin enable bayrock.music-visualizer`.
-- **You see a "couldn't play that" notification.** The link, file or search
-  returned nothing playable, or you're offline. YouTube sometimes changes
-  things in a way that breaks downloads until yt-dlp is updated, and
-  `omarchy update` updates it.
+- **You see a "couldn't play that" notification, or `[!] ERROR` in the
+  header.** The link, file or search returned nothing playable, or you're
+  offline. YouTube sometimes changes things in a way that breaks downloads
+  until yt-dlp is updated, and `omarchy update` updates it.
+- **Typing does nothing.** Click the visualizer window first so it has keyboard
+  focus.
 - **A new song takes a couple of seconds to start.** That's expected the first
   time: it's streamed while it's saved to the cache. Later plays start almost
   instantly.
@@ -139,6 +186,12 @@ copied. Nothing else leaves your machine.
 - **Theme changes:** the plugin watches the shell's theme colors. On a change,
   it steps that mixer to the new palette over ~0.8 s through mpv's IPC socket.
   The audio is never touched.
+- **Search box:** `lua/search.lua` runs inside mpv and handles every key. While
+  you type, it writes your text into the prompt line that the filter graph
+  redraws each frame. On <kbd>Enter</kbd>, it passes the search to the script
+  (`load`). The script resolves the song with `yt-dlp` while the old one keeps
+  playing, then switches mpv over. If the new song won't play, the script goes
+  back to the old one.
 - **Safety:** mpv runs with `--no-config` (so your personal mpv setup can't
   change it) and inside a 1.5 GB memory-capped systemd scope (normal use is
   ~400 MB).

@@ -4,24 +4,13 @@
 # Plays a track (YouTube/SoundCloud URL, local file, or YouTube search) on loop in
 # an mpv window: scrolling spectrogram, live hex dump, frequency bars and waveform
 # under a fake php2shell session header. Colors follow the current Omarchy theme
-# and fade live when it changes.
+# and fade live when it changes. Typing in the window searches for a new song.
 #
-# Usage: music-visualizer [URL | file | "search terms"] [label]
-#        music-visualizer start [URL | file | "search terms"] [label]
-#                                   always start, replacing a running visualizer
-#        music-visualizer status    print on/off
-#        music-visualizer off       close any running visualizer
-#        music-visualizer retheme   fade running visualizers to the theme's colors
-# Running it with no arguments while it's open closes it.
-# Keys in the window (mpv): f fullscreen, space pause, 9/0 volume, m mute, q quit.
-#
-# Optional config, ~/.config/music-visualizer/config (key = value):
-#   track   = default URL, file or search terms
-#   label   = header text for the default track (default: the track's title)
-#   palette = theme (default) | green (the original matrix-green look)
+# Run `music-visualizer --help` for usage.
 
 NAME="Music Visualizer"
 TITLE="$NAME ::"
+HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 # Per-run files (mpv IPC socket, header/hex text) live in a fresh private directory,
 # created atomically by mktemp (mode 0700, never reused), so no other account can
 # precreate it or plant symlinks in it, even on the shared /tmp fallback.
@@ -29,28 +18,84 @@ RUNBASE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/music-visualizer/config"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/music-visualizer"
 
+usage() {
+  cat <<EOF
+$NAME: a hacker-terminal music visualizer in your Omarchy theme colors.
+
+Usage:
+  music-visualizer [SOURCE] [LABEL]        open the visualizer (playing SOURCE),
+                                           or close it if open and no SOURCE given
+  music-visualizer start [SOURCE] [LABEL]  open, replacing a running visualizer
+  music-visualizer load SOURCE [LABEL]     switch the open visualizer to SOURCE
+  music-visualizer off                     close it
+  music-visualizer status                  print "on" or "off"
+  music-visualizer retheme                 fade it to the current theme's colors
+  music-visualizer help                    show this help (also -h, --help)
+
+SOURCE is a link (YouTube, SoundCloud, Bandcamp... anything yt-dlp plays), a
+local audio file, or search terms (plays the top YouTube result). Without one
+it plays the configured track. LABEL replaces the track title in the header.
+
+In the window:
+  type anything   search: the text appears in the terminal prompt
+    Enter         play the search          Esc       cancel it
+    Backspace     delete a character       Ctrl+W    delete a word
+    Ctrl+U        clear                    Ctrl+V    paste (links work too)
+  Space           pause / resume           Up/Down   volume
+  F11             fullscreen (or double-click; Esc leaves it)
+  Ctrl+Q          quit (or your toggle shortcut, or Super+W)
+
+While a new song loads, the current one keeps playing. If nothing matches,
+the header says so and the current song carries on.
+
+Settings, in $CONF (key = value):
+  track   = what opens by default: a link, file or search terms
+  label   = header text for that track (default: the track's title)
+  palette = theme (default) | green (classic matrix green)
+
+Songs are cached in $CACHE after the first play.
+EOF
+}
+
 conf() { # conf <key> -> its value in the config file (last one wins)
   sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONF" 2>/dev/null | tail -1 |
     sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 running() { pgrep -f -- "--title=$TITLE" >/dev/null; }
 
+instances() { # live visualizers, "<pid> <run dir>" per line; stale run dirs are removed
+  local d pid
+  for d in "$RUNBASE"/music-visualizer.*; do
+    # ours only: a real directory we own (anything else in a shared /tmp is ignored)
+    [[ -d $d && ! -L $d && -O $d ]] || continue
+    pid=${d##*/music-visualizer.}; pid=${pid%%.*}
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    # only a live visualizer counts (a stale dir's PID may belong to something else now)
+    if tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" | grep -q 'music-visualizer'; then
+      printf '%s %s\n' "$pid" "$d"
+    else
+      rm -rf -- "$d"
+    fi
+  done
+}
+
 case "$1" in
+  help | -h | --help) usage; exit 0 ;;
   status) running && echo on || { echo off; exit 1; }; exit ;;
   off) pkill -f -- "--title=$TITLE"; exit 0 ;;
   retheme)
-    for d in "$RUNBASE"/music-visualizer.*; do
-      # ours only: a real directory we own (anything else in a shared /tmp is ignored)
-      [[ -d $d && ! -L $d && -O $d ]] || continue
-      pid=${d##*/music-visualizer.}; pid=${pid%%.*}
-      [[ $pid =~ ^[0-9]+$ ]] || continue
-      # only signal a live visualizer (a stale dir's PID may belong to something else now)
-      if tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" | grep -q 'music-visualizer'; then
-        kill -USR1 "$pid"
-      else
-        rm -rf -- "$d"
-      fi
-    done
+    instances | while read -r pid _; do kill -USR1 "$pid"; done
+    exit 0 ;;
+  load)
+    # hand a new track to the running visualizer, which switches in place (USR2)
+    shift
+    [[ -n $1 ]] || { echo "usage: music-visualizer load SOURCE [LABEL]" >&2; exit 2; }
+    found=""
+    while read -r pid d; do
+      printf '%s\n%s\n' "${1//$'\n'/ }" "${2//$'\n'/ }" >"$d/request.tmp" &&
+        mv -f "$d/request.tmp" "$d/request" && kill -USR2 "$pid" && found=1
+    done < <(instances)
+    [[ -n $found ]] || { echo "$NAME isn't running (start it with: music-visualizer start SOURCE)" >&2; exit 1; }
     exit 0 ;;
   start)
     # explicit start (used by the Omarchy plugin): replace any running visualizer
@@ -60,6 +105,7 @@ case "$1" in
       for _ in $(seq 1 20); do running || break; sleep 0.1; done
     fi
     START=1 ;;
+  -*) echo "unknown option: $1 (see music-visualizer --help)" >&2; exit 2 ;;
 esac
 if [[ -z $START && -z $1 ]] && running; then pkill -f -- "--title=$TITLE"; exit 0; fi
 
@@ -68,37 +114,45 @@ if [[ -z $START && -z $1 ]] && running; then pkill -f -- "--title=$TITLE"; exit 
 # for interactive terminal use.
 [[ -t 1 ]] || exec >/dev/null 2>&1 </dev/null
 
-# --- what to play ---------------------------------------------------------------
-if [[ -n $1 ]]; then
-  SRC=$1 LABEL=$2
-elif [[ -n $(conf track) ]]; then
-  SRC=$(conf track) LABEL=$(conf label)
-else
-  SRC="https://www.youtube.com/watch?v=T6hOlik58gg"
-  LABEL="Petite Meller — High Forever (Marlon Hoffstadt Remix)"
-fi
-[[ $SRC == "~/"* ]] && SRC="$HOME/${SRC#\~/}"
-SHOWN=$SRC
-[[ $SRC == *://* || -e $SRC ]] || SRC="ytdl://ytsearch1:$SRC"
-
-# --- audio cache: resolving a YouTube URL costs 2+ s on every launch (more when
-# YouTube rotates its player JS), so the first play streams while a background
-# yt-dlp saves the audio and its title; later plays of the same URL/search start
+# --- what to play -----------------------------------------------------------------
+# resolve <src> [label]: sets SHOWN (what was asked for), SRC (what mpv plays), LABEL,
+# and KEY (cache key) for a remote source. A cached copy replaces a remote SRC.
+#
+# Audio cache: resolving a YouTube URL costs 2+ s on every launch (more when YouTube
+# rotates its player JS), so the first play streams while a background yt-dlp saves
+# the audio and its title (cache_bg); later plays of the same URL/search start
 # instantly. Clear with: rm -rf ~/.cache/music-visualizer
-if [[ ! -e $SRC ]]; then
-  key=$(printf '%s' "$SRC" | sha1sum | cut -c1-16)
-  cached=$(find "$CACHE" -maxdepth 1 -name "$key.*" ! -name '*.part' ! -name '*.ytdl' \
+resolve() {
+  SRC=$1 LABEL=$2 KEY=""
+  [[ $SRC == "~/"* ]] && SRC="$HOME/${SRC#\~/}"
+  SHOWN=$SRC
+  [[ $SRC == *://* || -e $SRC ]] || SRC="ytdl://ytsearch1:$SRC"
+  [[ -e $SRC ]] && return
+  KEY=$(printf '%s' "$SRC" | sha1sum | cut -c1-16)
+  local cached
+  cached=$(find "$CACHE" -maxdepth 1 -name "$KEY.*" ! -name '*.part' ! -name '*.ytdl' \
     ! -name '*.title' -size +0 2>/dev/null | head -1)
   if [[ -n $cached ]]; then
     SRC=$cached
-    [[ -z $LABEL && -s $CACHE/$key.title ]] && LABEL=$(head -1 "$CACHE/$key.title")
-  elif ! pgrep -f -- "music-visualizer-cache/$key" >/dev/null; then
-    mkdir -p "$CACHE"
-    setsid -f yt-dlp -q --no-warnings --no-playlist -f bestaudio/best --no-simulate \
-      --print-to-file title "$CACHE/$key.title" -o "$CACHE/$key.%(ext)s" \
-      --exec "true music-visualizer-cache/$key" "${SRC#ytdl://}" >/dev/null 2>&1
+    [[ -z $LABEL && -s $CACHE/$KEY.title ]] && LABEL=$(head -1 "$CACHE/$KEY.title")
   fi
+}
+cache_bg() { # save the remote $SRC (cache key $KEY) in the background
+  pgrep -f -- "music-visualizer-cache/$KEY" >/dev/null && return
+  mkdir -p "$CACHE"
+  setsid -f yt-dlp -q --no-warnings --no-playlist -f bestaudio/best --no-simulate \
+    --print-to-file title "$CACHE/$KEY.title" -o "$CACHE/$KEY.%(ext)s" \
+    --exec "true music-visualizer-cache/$KEY" -- "${SRC#ytdl://}" >/dev/null 2>&1
+}
+
+if [[ -n $1 ]]; then
+  resolve "$1" "$2"
+elif [[ -n $(conf track) ]]; then
+  resolve "$(conf track)" "$(conf label)"
+else
+  resolve "https://www.youtube.com/watch?v=T6hOlik58gg" "Petite Meller — High Forever (Marlon Hoffstadt Remix)"
 fi
+[[ -n $KEY && ! -e $SRC ]] && cache_bg
 # No label yet: show what was asked for, then swap in mpv's media title once known.
 NEED_TITLE=""
 if [[ -z $LABEL ]]; then
@@ -108,12 +162,20 @@ if [[ -z $LABEL ]]; then
 fi
 
 RUN=$(mktemp -d "$RUNBASE/music-visualizer.$$.XXXXXXXX") || exit 1
-trap 'kill $HEXPID $TITLEPID $MPVPID 2>/dev/null; rm -rf "$RUN"' EXIT
+trap 'kill $HEXPID $TITLEPID $MPVPID 2>/dev/null; stop_load; rm -rf "$RUN"' EXIT
 # make TERM/INT/HUP (e.g. the Omarchy shell stopping the plugin) run the EXIT cleanup too
 trap 'exit 143' TERM INT HUP
 
 FONT="JetBrainsMono Nerd Font"
+HOST=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null)
 ipc() { socat - "UNIX-CONNECT:$RUN/mpv.sock" 2>/dev/null; }
+ipc_get() { # ipc_get <property> -> its value, empty if unavailable
+  jq -nc --arg p "$1" '{command: ["get_property", $p]}' | ipc |
+    jq -r 'select(.error == "success") | .data // empty' 2>/dev/null | head -1
+}
+atomic() { # atomic <file>: write stdin to a file that drawtext may be reading
+  cat >"$1.tmp" && mv -f "$1.tmp" "$1"
+}
 
 # --- colors -----------------------------------------------------------------------
 # The graph below draws a color-neutral *mask*: red channel = accent layers (prompt,
@@ -178,16 +240,26 @@ retheme() {
 }
 
 # --- header text (re-read by drawtext every frame, so it can change mid-play) -----
-write_labels() {
-  printf '%s\n' "root@$(hostname):~# ./php2shell --profile 21 --stream audio://$(printf '%s' "$1" | tr ' ' '_' | tr -cd '[:alnum:]_().-' | cut -c1-48)" >"$RUN/prompt.tmp"
+# The prompt line doubles as the search box: while you type, lua/search.lua owns
+# prompt.txt (and footer.txt) and flags it with $RUN/typing. This script then only
+# updates prompt.idle, which search.lua puts back when typing ends.
+write_labels() { # write_labels <label> [status line]
+  printf '%s\n' "$1" >"$RUN/label"
+  printf '%s\n' "root@$HOST:~# ./php2shell --profile 21 --stream audio://$(printf '%s' "$1" | tr ' ' '_' | tr -cd '[:alnum:]_().-' | cut -c1-48)" |
+    atomic "$RUN/prompt.idle"
+  [[ -e $RUN/typing ]] || atomic "$RUN/prompt.txt" <"$RUN/prompt.idle"
   printf '%s\n' \
     "[*] START  operation initialized" \
     "[>] INFO   payload :: $1" \
-    "[#] STAGE  CHAIN ACTIVE :: spectral exfiltration :: loop=inf" >"$RUN/header.tmp"
-  mv -f "$RUN/prompt.tmp" "$RUN/prompt.txt"
-  mv -f "$RUN/header.tmp" "$RUN/header.txt"
+    "${2:-[#] STAGE  CHAIN ACTIVE :: spectral exfiltration :: loop=inf}" | atomic "$RUN/header.txt"
 }
 write_labels "$LABEL"
+printf '%s\n' "RCE R1TU4L ST4RT3D -> 0P3N1NG P0RT4L        :: type to search" | atomic "$RUN/footer.idle"
+atomic "$RUN/footer.txt" <"$RUN/footer.idle"
+
+set_title() { # window title
+  jq -nc --arg t "$TITLE $1" '{command: ["set_property", "title", $t]}' | ipc >/dev/null
+}
 
 # once mpv knows the track's real title, use it for the header and window title
 title_watch() {
@@ -195,14 +267,72 @@ title_watch() {
   # until playback starts, media-title is only a placeholder (e.g. "watch?v=...")
   for _ in $(seq 1 120); do
     sleep 0.25
-    printf '%s\n' '{"command":["get_property","playback-time"]}' | ipc |
-      jq -e 'select(.error == "success")' >/dev/null 2>&1 && break
+    [[ -n $(ipc_get playback-time) ]] && break
   done
-  t=$(printf '%s\n' '{"command":["get_property","media-title"]}' | ipc |
-    jq -r 'select(.error == "success") | .data // empty' 2>/dev/null | head -1)
+  t=$(ipc_get media-title)
   [[ -n $t && $t != "$SHOWN" && $t != ytsearch* && $t != *://* ]] || return
   write_labels "$t"
-  jq -nc --arg t "$TITLE $t" '{command: ["set_property", "title", $t]}' | ipc >/dev/null
+  set_title "$t"
+}
+
+# --- switching tracks in place (search box, or `music-visualizer load`) ------------
+# load_track <src> [label]: resolve the new source while the current song keeps
+# playing, then swap mpv over to it. search.lua falls back to the previous track if
+# mpv can't play the new one, and flags that with $RUN/loadfail.
+load_track() {
+  local q=$1 old title url out _
+  old=$(head -1 "$RUN/label" 2>/dev/null)
+  write_labels "$old" "[~] SEARCH resolving :: $q"
+  resolve "$q" "$2"
+  title=$LABEL
+  if [[ ! -e $SRC ]]; then
+    # look it up first, so the old song plays on during the ~2 s this takes
+    out=$(yt-dlp -q --no-warnings --no-playlist -f bestaudio/best \
+      --print title --print urls -- "${SRC#ytdl://}" 2>/dev/null)
+    url=$(sed -n 2p <<<"$out")
+    if [[ $url != http* ]]; then
+      write_labels "$old" "[!] ERROR  no match :: $q"
+      return
+    fi
+    title=${title:-$(sed -n 1p <<<"$out")}
+    cache_bg
+    SRC=$url
+  fi
+  [[ -n $title ]] || title=$(basename "$SHOWN")
+  rm -f "$RUN/loadfail"
+  jq -nc --arg u "$SRC" '{command: ["loadfile", $u, "replace"]}' | ipc >/dev/null
+  for _ in $(seq 1 80); do
+    sleep 0.25
+    if [[ -e $RUN/loadfail ]]; then
+      write_labels "$old" "[!] ERROR  couldn't play :: $q"
+      return
+    fi
+    if [[ $(ipc_get path) == "$SRC" && -n $(ipc_get playback-time) ]]; then
+      write_labels "$title"
+      set_title "$title"
+      return
+    fi
+  done
+  write_labels "$old" "[!] ERROR  timed out :: $q"
+}
+
+stop_load() { # cancel an in-progress load_track (and its yt-dlp lookup)
+  [[ -n $LOADPID ]] || return
+  pkill -P "$LOADPID" 2>/dev/null
+  kill "$LOADPID" 2>/dev/null
+  LOADPID=""
+}
+
+on_load() { # USR2: a new track was requested in $RUN/request
+  local req=()
+  [[ -s $RUN/request ]] && mapfile -t req <"$RUN/request"
+  rm -f "$RUN/request"
+  [[ -n ${req[0]} ]] || return
+  [[ -n $TITLEPID ]] && kill "$TITLEPID" 2>/dev/null
+  TITLEPID=""
+  stop_load
+  load_track "${req[0]}" "${req[1]}" &
+  LOADPID=$!
 }
 
 # --- mask graph (colors are applied afterwards by @theme) --------------------------
@@ -225,7 +355,7 @@ drawtext=font='${FONT}':textfile='$RUN/header.txt':reload=1:expansion=none:x=22:
 drawtext=font='${FONT}':textfile='$RUN/hex.txt':reload=1:expansion=none:x=1428:y=162:fontsize=14:line_spacing=7:fontcolor=${F}@0.75,
 drawtext=font='${FONT}':text='T+%{pts\:hms}':x=w-tw-24:y=14:fontsize=26:fontcolor=${A},
 drawtext=font='${FONT}':text='[ SIGNAL LOCKED ]':x=w-tw-24:y=52:fontsize=20:fontcolor=${L}:enable='lt(mod(t\,1)\,0.6)',
-drawtext=font='${FONT}':text='RCE R1TU4L ST4RT3D -> 0P3N1NG P0RT4L':x=22:y=1072-th:fontsize=18:fontcolor=${F}@0.6[vo]"
+drawtext=font='${FONT}':textfile='$RUN/footer.txt':reload=1:expansion=none:x=22:y=1072-th:fontsize=18:fontcolor=${F}@0.6[vo]"
 
 # live-updating hex dump column (first page written up front so mpv can start at once)
 addr=$((0x7ffd3a2c0000))
@@ -235,7 +365,7 @@ hexpage() {
     head -c 8 /dev/urandom | od -An -tx1 | tr -s ' ' | sed 's/^ //' | tr '\n' ' '
     printf ' |%-8s|\n' "$(head -c 32 /dev/urandom | tr -dc 'A-Za-z0-9#$&*+<>?.' | head -c 8)"
     addr=$((addr + 8))
-  done >"$RUN/hex.tmp" && mv -f "$RUN/hex.tmp" "$RUN/hex.txt"
+  done >"$RUN/hex.txt.tmp" && mv -f "$RUN/hex.txt.tmp" "$RUN/hex.txt" # not piped: addr must persist
 }
 hexpage
 # Ends by itself if this script dies without cleanup (e.g. SIGKILL when the shell
@@ -244,16 +374,23 @@ hexpage
 HEXPID=$!
 
 trap retheme USR1
+trap on_load USR2
 # Safety net: run mpv in its own memory-capped scope (normal use is ~400 MB), so a
 # runaway filter graph can only kill the visualizer, never the whole desktop.
 MEMCAP=()
 systemd-run --user --scope -q true >/dev/null 2>&1 &&
   MEMCAP=(systemd-run --user --scope -q -p MemoryMax=1500M -p MemorySwapMax=0 --)
 # --no-config: the user's own mpv.conf/scripts (shaders, OSD overlays, fullscreen,
-# resume...) must not change how the visualizer looks or behaves.
+# resume...) must not change how the visualizer looks or behaves. mpv's own default
+# keys and helper scripts are off too: search.lua defines every key (typing any
+# letter searches) and keeps mpv idle-safe when a new track fails to load.
+MVIZ_RUN=$RUN MVIZ_PID=$$ MVIZ_HOST=$HOST \
 "${MEMCAP[@]}" mpv --no-config --msg-level=all=info --loop-file=inf \
-  --ytdl-format=bestaudio/best --force-window=immediate \
+  --ytdl-format=bestaudio/best --force-window=immediate --idle=yes \
   --title="$TITLE $LABEL" --keep-open=no --osc=no \
+  --no-input-default-bindings --load-console=no --load-commands=no --load-select=no \
+  --load-context-menu=no --load-positioning=no --load-stats-overlay=no \
+  --script="$HERE/lua/search.lua" \
   --background=color --background-color="$(bghex "${CUR[@]:0:3}")" \
   --gpu-api=opengl --no-resume-playback --save-position-on-quit=no --autocreate-playlist=no \
   --input-ipc-server="$RUN/mpv.sock" \
@@ -262,8 +399,8 @@ MPVPID=$!
 TITLEPID=""
 if [[ -n $NEED_TITLE ]]; then title_watch & TITLEPID=$!; fi
 
-# mpv runs in the background so a theme change (SIGUSR1) can be handled while it
-# plays; `wait` returns early on the signal, so loop until mpv exits.
+# mpv runs in the background so signals (theme change, new track) can be handled
+# while it plays; `wait` returns early on a signal, so loop until mpv exits.
 rc=0
 while kill -0 "$MPVPID" 2>/dev/null; do wait "$MPVPID"; rc=$?; done
 
