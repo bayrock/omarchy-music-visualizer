@@ -44,6 +44,7 @@ In the window:
   Space           pause / resume           Up/Down   volume
   F11             fullscreen (or double-click; Esc leaves it)
   Ctrl+Q          quit (or your toggle shortcut, or Super+W)
+  Media keys      play/pause works too (needs mpv-mpris, part of Omarchy)
 
 While a new song loads, the current one keeps playing. If nothing matches,
 the header says so and the current song carries on.

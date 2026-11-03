@@ -44,8 +44,8 @@ launch streams the default track. After that, it starts almost instantly.
 To change the song, just start typing in the window (see below).
 
 > Like every Omarchy plugin, this runs unsandboxed with your user's
-> permissions. The code is short (`Panel.qml` and `bin/music-visualizer`), so
-> give it a read first.
+> permissions. The code is short (`Panel.qml`, `bin/music-visualizer` and
+> `lua/search.lua`), so give it a read first.
 
 ### Optional: add it to the Omarchy menu
 
@@ -169,8 +169,11 @@ rm -rf ~/.cache/music-visualizer ~/.config/music-visualizer
 - **A new song takes a couple of seconds to start.** That's expected the first
   time: it's streamed while it's saved to the cache. Later plays start almost
   instantly.
-- **The window is small.** Press <kbd>f</kbd> for fullscreen, or resize it like
-  any floating window.
+- **The window is small.** Press <kbd>F11</kbd> (or double-click) for
+  fullscreen, or resize it like any floating window.
+- **Media keys don't reach it.** It needs `mpv-mpris`, which Omarchy installs
+  by default. If another player is also open, the media keys control whichever
+  one Omarchy treats as active.
 
 ## Privacy and storage
 
@@ -192,8 +195,9 @@ copied. Nothing else leaves your machine.
   you type, it writes your text into the prompt line that the filter graph
   redraws each frame. On <kbd>Enter</kbd>, it passes the search to the script
   (`load`). The script resolves the song with `yt-dlp` while the old one keeps
-  playing, then switches mpv over. If the new song won't play, the script goes
-  back to the old one.
+  playing, then switches mpv over. If the new song won't play, `search.lua`
+  goes back to the old one. All of this goes through a private per-run
+  directory (`mktemp -d`, mode 0700).
 - **Media keys:** the script loads Omarchy's `mpv-mpris` add-on, so the
   visualizer shows up as an MPRIS player with the track's real title.
 - **Safety:** mpv runs with `--no-config` (so your personal mpv setup can't
@@ -201,7 +205,8 @@ copied. Nothing else leaves your machine.
   ~400 MB).
 
 Requirements, all part of Omarchy's base install: `mpv`, `yt-dlp`, `socat`,
-`jq` and the JetBrainsMono Nerd Font.
+`jq` and the JetBrainsMono Nerd Font. `mpv-mpris` (also in the base install)
+is optional: it enables the media keys.
 
 ## License
 
