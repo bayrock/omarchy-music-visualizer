@@ -13,6 +13,8 @@ themes while it plays and the colors fade smoothly to the new palette.
   appears in the hacker prompt. Press <kbd>Enter</kbd> and it plays.
 - **Plays almost anything:** a YouTube or SoundCloud link, a local audio file,
   or plain search terms. Each track loops until you close it.
+- **Works with your media keys:** play/pause controls it, and Omarchy's media
+  widgets show the current track.
 - **Uses your theme:** colors come from your Omarchy theme and update live
   when you switch.
 - **Fast to reopen:** songs are cached after the first play, so a repeat
@@ -192,6 +194,8 @@ copied. Nothing else leaves your machine.
   (`load`). The script resolves the song with `yt-dlp` while the old one keeps
   playing, then switches mpv over. If the new song won't play, the script goes
   back to the old one.
+- **Media keys:** the script loads Omarchy's `mpv-mpris` add-on, so the
+  visualizer shows up as an MPRIS player with the track's real title.
 - **Safety:** mpv runs with `--no-config` (so your personal mpv setup can't
   change it) and inside a 1.5 GB memory-capped systemd scope (normal use is
   ~400 MB).

@@ -257,8 +257,10 @@ write_labels "$LABEL"
 printf '%s\n' "RCE R1TU4L ST4RT3D -> 0P3N1NG P0RT4L        :: type to search" | atomic "$RUN/footer.idle"
 atomic "$RUN/footer.txt" <"$RUN/footer.idle"
 
-set_title() { # window title
-  jq -nc --arg t "$TITLE $1" '{command: ["set_property", "title", $t]}' | ipc >/dev/null
+set_title() { # window title, plus the track title mpv reports over MPRIS (media widgets)
+  jq -nc --arg t "$TITLE $1" --arg m "$1" \
+    '{command: ["set_property", "title", $t]}, {command: ["set_property", "force-media-title", $m]}' |
+    ipc >/dev/null
 }
 
 # once mpv knows the track's real title, use it for the header and window title
@@ -380,6 +382,15 @@ trap on_load USR2
 MEMCAP=()
 systemd-run --user --scope -q true >/dev/null 2>&1 &&
   MEMCAP=(systemd-run --user --scope -q -p MemoryMax=1500M -p MemorySwapMax=0 --)
+EXTRA=()
+# MPRIS (Omarchy ships mpv-mpris): media keys and the shell's media widgets see the
+# visualizer. --no-config skips system scripts, so load it explicitly when present.
+for so in /usr/lib/mpv-mpris/mpris.so /etc/mpv/scripts/mpris.so; do
+  [[ -r $so ]] && { EXTRA+=(--script="$so"); break; }
+done
+# a known title (label or cache) is what MPRIS shows instead of the URL/cache file
+# name; otherwise title_watch picks up mpv's own media title once it's known
+[[ -z $NEED_TITLE ]] && EXTRA+=(--force-media-title="$LABEL")
 # --no-config: the user's own mpv.conf/scripts (shaders, OSD overlays, fullscreen,
 # resume...) must not change how the visualizer looks or behaves. mpv's own default
 # keys and helper scripts are off too: search.lua defines every key (typing any
@@ -390,7 +401,7 @@ MVIZ_RUN=$RUN MVIZ_PID=$$ MVIZ_HOST=$HOST \
   --title="$TITLE $LABEL" --keep-open=no --osc=no \
   --no-input-default-bindings --load-console=no --load-commands=no --load-select=no \
   --load-context-menu=no --load-positioning=no --load-stats-overlay=no \
-  --script="$HERE/lua/search.lua" \
+  --script="$HERE/lua/search.lua" "${EXTRA[@]}" \
   --background=color --background-color="$(bghex "${CUR[@]:0:3}")" \
   --gpu-api=opengl --no-resume-playback --save-position-on-quit=no --autocreate-playlist=no \
   --input-ipc-server="$RUN/mpv.sock" \
