@@ -18,10 +18,11 @@ Files: `Panel.qml` (shell IPC), `bin/music-visualizer` (everything else), `lua/s
 6. Update the installed copy: `omarchy plugin update bayrock.music-visualizer --yes`. Panel.qml
    changes also need `omarchy restart shell`. The first launch right after an update may get
    killed by the panel reload, so launch again.
-7. **Marketplace** (omacom/omarchy-plugin-marketplace#13699, or a new submission once listed):
-   if a listing is pending review, draft a short comment for the user (new commit/tag, what
-   changed, anything security-relevant: new files, subprocesses, capabilities) and put it on the
-   clipboard (`wl-copy`). The user posts it themselves.
+7. **Marketplace:** listed at https://omarchyplugins.com/plugin.html?id=bayrock.music-visualizer
+   (accepted from omacom/omarchy-plugin-marketplace#13699). Installs track this repo, so a pushed
+   release reaches users through `omarchy plugin update`; no comment is needed. If a change adds
+   anything security-relevant (new files outside the run dir, subprocesses, capabilities), say
+   so in the release commit and ask the user whether to note it on the marketplace.
 
 ## Rules
 - Per-run files only inside the private `mktemp -d` run dir (a marketplace security review

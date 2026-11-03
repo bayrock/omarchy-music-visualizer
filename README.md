@@ -27,6 +27,9 @@ themes while it plays and the colors fade smoothly to the new palette.
 
 ## Install
 
+Music Visualizer is listed on the
+[Omarchy plugin hub](https://omarchyplugins.com/plugin.html?id=bayrock.music-visualizer).
+
 **1. Add the plugin:**
 
 ```bash
