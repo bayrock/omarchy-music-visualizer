@@ -22,7 +22,10 @@
 
 NAME="Music Visualizer"
 TITLE="$NAME ::"
-RUNBASE="${XDG_RUNTIME_DIR:-/tmp}"
+# Per-run files (mpv IPC socket, header/hex text) live in a fresh private directory,
+# created atomically by mktemp (mode 0700, never reused), so no other account can
+# precreate it or plant symlinks in it, even on the shared /tmp fallback.
+RUNBASE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/music-visualizer/config"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/music-visualizer"
 
@@ -36,14 +39,16 @@ case "$1" in
   status) running && echo on || { echo off; exit 1; }; exit ;;
   off) pkill -f -- "--title=$TITLE"; exit 0 ;;
   retheme)
-    for d in "$RUNBASE"/music-visualizer.*/; do
-      pid=${d%/}; pid=${pid##*.}
+    for d in "$RUNBASE"/music-visualizer.*; do
+      # ours only: a real directory we own (anything else in a shared /tmp is ignored)
+      [[ -d $d && ! -L $d && -O $d ]] || continue
+      pid=${d##*/music-visualizer.}; pid=${pid%%.*}
       [[ $pid =~ ^[0-9]+$ ]] || continue
       # only signal a live visualizer (a stale dir's PID may belong to something else now)
-      if tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q 'music-visualizer'; then
+      if tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" | grep -q 'music-visualizer'; then
         kill -USR1 "$pid"
       else
-        rm -rf "${d%/}"
+        rm -rf -- "$d"
       fi
     done
     exit 0 ;;
@@ -102,8 +107,7 @@ if [[ -z $LABEL ]]; then
   NEED_TITLE=1
 fi
 
-RUN="$RUNBASE/music-visualizer.$$"
-mkdir -p "$RUN"
+RUN=$(mktemp -d "$RUNBASE/music-visualizer.$$.XXXXXXXX") || exit 1
 trap 'kill $HEXPID $TITLEPID $MPVPID 2>/dev/null; rm -rf "$RUN"' EXIT
 # make TERM/INT/HUP (e.g. the Omarchy shell stopping the plugin) run the EXIT cleanup too
 trap 'exit 143' TERM INT HUP
