@@ -103,10 +103,15 @@ local function draw_overlay()
     ev[#ev + 1] = ("{\\an7%s%s\\bord0\\1c&H%s&%s}%s")
       :format(at(22, 12), fs(25), accent, font, ass_text(prompt_line))
   end
-  ev[#ev + 1] = ("{\\an5%s%s%s\\1c&H%s&\\3c&H%s&%s}❚❚ PAUSED")
-    :format(mid(-38), fs(84), bord(8), accent, bg, font)
-  ev[#ev + 1] = ("{\\an5%s%s%s\\1c&H%s&\\3c&H%s&%s}[SPACE] resume%s")
-    :format(mid(37), fs(28), bord(6), accent, bg, font, typing and "   [ENTER] play search" or "")
+  -- see-through panel behind the sign (theme background, accent edge), so it reads
+  -- as sitting above the frozen picture
+  local pw, ph = 800 * k, 200 * k
+  ev[#ev + 1] = ("{\\an7\\pos(%d,%d)\\p1%s\\shad0\\1c&H%s&\\1a&H50&\\3c&H%s&\\3a&H40&}m 0 0 l %d 0 %d %d 0 %d{\\p0}")
+    :format(d.w / 2 - pw / 2, d.h / 2 - 115 * k, bord(2), bg, accent, pw, pw, ph, ph)
+  ev[#ev + 1] = ("{\\an5%s%s\\bord0\\1c&H%s&%s}❚❚ PAUSED")
+    :format(mid(-38), fs(84), accent, font)
+  ev[#ev + 1] = ("{\\an5%s%s\\bord0\\1c&H%s&%s}[SPACE] resume%s")
+    :format(mid(37), fs(28), accent, font, typing and "   [ENTER] play search" or "")
   overlay.data = table.concat(ev, "\n")
   overlay:update()
 end

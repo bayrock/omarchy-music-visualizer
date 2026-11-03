@@ -261,7 +261,8 @@ and never copied. Nothing else leaves your machine.
   goes back to the old one. All of this goes through a private per-run
   directory (`mktemp -d`, mode 0700).
 - **Pausing:** the filter graph only makes frames while audio plays, so a
-  paused picture is frozen. `search.lua` then draws a "PAUSED" sign and the
+  paused picture is frozen. `search.lua` then draws a "PAUSED" sign (on a
+  see-through panel in the middle of the window) and the
   live search prompt as an mpv OSD overlay (in your theme's accent color), and
   <kbd>Space</kbd> always resumes. Playing a search or pressing <kbd>Tab</kbd>
   resumes too.
