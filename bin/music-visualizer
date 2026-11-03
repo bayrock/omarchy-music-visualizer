@@ -51,7 +51,8 @@ In the window:
     Backspace     delete a character       Ctrl+W    delete a word
     Ctrl+U        clear                    Ctrl+V    paste (links work too)
   Tab             shuffle: play a random track (again: skip to another)
-  Space           pause / resume           Up/Down   volume
+  Space           pause / resume (resumes even mid-search)
+  Up/Down         volume
   F11             fullscreen (or double-click; Esc leaves it)
   Ctrl+Q          quit (or your toggle shortcut, or Super+W)
   Media keys      play/pause, and Next skips in shuffle (needs mpv-mpris,
@@ -424,6 +425,10 @@ mixer() {
 
 CUR=($(theme_colors))
 bghex() { printf '#%02x%02x%02x' "$1" "$2" "$3"; }
+# accent + background as RRGGBB, for search.lua's pause overlay (mpv's OSD is drawn
+# after the theme mixer, so it needs the real colors)
+osd_colors() { printf '%02x%02x%02x %02x%02x%02x\n' "${CUR[@]:3:3}" "${CUR[@]:0:3}" | atomic "$RUN/colors"; }
+osd_colors
 
 # fade the running mpv from CUR to the theme's current colors (~0.8 s, smoothstep)
 retheme() {
@@ -446,6 +451,7 @@ retheme() {
     }
   }' | ipc >/dev/null
   CUR=("${NEW[@]}")
+  osd_colors
 }
 
 # --- header text (re-read by drawtext every frame, so it can change mid-play) -----
@@ -508,7 +514,7 @@ load_track() {
   fi
   title=$LTITLE
   rm -f "$RUN/loadfail" "$RUN/shuffle" "$RUN/upnext"
-  jq -nc --arg u "$SRC" '{command: ["set_property", "loop-file", "inf"]}, {command: ["loadfile", $u, "replace"]}' |
+  jq -nc --arg u "$SRC" '{command: ["set_property", "loop-file", "inf"]}, {command: ["set_property", "pause", false]}, {command: ["loadfile", $u, "replace"]}' |
     ipc >/dev/null
   for _ in $(seq 1 80); do
     sleep 0.25

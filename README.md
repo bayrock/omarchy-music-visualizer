@@ -114,7 +114,7 @@ because they're cached.
 | <kbd>Backspace</kbd> · <kbd>Ctrl</kbd>+<kbd>W</kbd> · <kbd>Ctrl</kbd>+<kbd>U</kbd> | delete a character · a word · everything |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste (links work too) |
 | <kbd>Tab</kbd> | shuffle: play a random track, or skip to the next one |
-| <kbd>Space</kbd> | pause / resume (when you're not typing) |
+| <kbd>Space</kbd> | pause / resume (while searching it types a space, unless paused) |
 | <kbd>↑</kbd> / <kbd>↓</kbd> | volume |
 | <kbd>F11</kbd> or double-click | fullscreen |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | quit (your shortcut and <kbd>Super</kbd>+<kbd>W</kbd> also close it) |
@@ -217,6 +217,9 @@ rm -rf ~/.cache/music-visualizer ~/.config/music-visualizer
   until yt-dlp is updated, and `omarchy update` updates it.
 - **Typing does nothing.** Click the visualizer window first so it has keyboard
   focus.
+- **The picture froze.** It's paused: a "PAUSED" sign shows, and
+  <kbd>Space</kbd> resumes. (Before 1.3.1 there was no sign, and typing while
+  paused turned <kbd>Space</kbd> into a typed space.)
 - **Shuffle shows `next: (lookup failed: Tab to retry)`.** A track couldn't be
   found, usually a connection hiccup. Press <kbd>Tab</kbd>. A track that won't
   play is skipped automatically.
@@ -257,6 +260,11 @@ and never copied. Nothing else leaves your machine.
   playing, then switches mpv over. If the new song won't play, `search.lua`
   goes back to the old one. All of this goes through a private per-run
   directory (`mktemp -d`, mode 0700).
+- **Pausing:** the filter graph only makes frames while audio plays, so a
+  paused picture is frozen. `search.lua` then draws a "PAUSED" sign and the
+  live search prompt as an mpv OSD overlay (in your theme's accent color), and
+  <kbd>Space</kbd> always resumes. Playing a search or pressing <kbd>Tab</kbd>
+  resumes too.
 - **Shuffle:** the script keeps a shuffled list of the playlist and queues the
   next track in mpv's own playlist while the current one plays. `search.lua`
   tells the script when mpv moves on (track ended, <kbd>Tab</kbd>, or Next), and

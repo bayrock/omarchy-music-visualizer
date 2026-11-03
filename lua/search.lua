@@ -16,6 +16,12 @@
 --   request                   "<command>\n<source>\n<label>\n": load | shuffle | advance
 --   shuffle                   present while in shuffle mode
 --   loadfail                  written when a new track failed and the old one resumed
+--   colors                    "<accent> <background>" as RRGGBB, for the pause overlay
+--
+-- Pausing freezes the whole picture: the filter graph only makes frames while audio
+-- plays, so prompt.txt changes can't show up. While paused, an OSD overlay (which
+-- mpv still draws on the frozen frame) says so and mirrors the search prompt, and
+-- Space always resumes, even mid-search.
 
 local mp = require "mp"
 local utils = require "mp.utils"
@@ -60,14 +66,58 @@ local function chars(s)
   return t
 end
 
+local function paused() return mp.get_property_bool("pause", false) end
+local function resume() mp.set_property_bool("pause", false) end
+
+-- pause overlay ---------------------------------------------------------------------
+local overlay = mp.create_osd_overlay("ass-events")
+
+local function ass_text(s) -- literal text for ASS (U+2060 keeps a backslash literal)
+  return (s:gsub("\\", "\\\226\129\160"):gsub("{", "\\{"):gsub("}", "\\}"))
+end
+local function ass_color(hex) -- RRGGBB -> ASS BGR
+  return hex:sub(5, 6) .. hex:sub(3, 4) .. hex:sub(1, 2)
+end
+
+local prompt_line = ""
+
+local function draw_overlay()
+  if not paused() then overlay:remove(); return end
+  local accent, bg = (slurp("colors") or ""):match("(%x%x%x%x%x%x) (%x%x%x%x%x%x)")
+  accent, bg = ass_color(accent or "00ff41"), ass_color(bg or "020702")
+  -- place things on the 1920x1080 canvas, wherever the video sits in the window
+  local d = mp.get_property_native("osd-dimensions") or {}
+  if not d.w or d.w <= 0 then return end
+  local k = (d.w - d.ml - d.mr) / 1920
+  overlay.res_x, overlay.res_y = d.w, d.h
+  local function at(x, y) return ("\\pos(%d,%d)"):format(d.ml + x * k, d.mt + y * k) end
+  local function fs(n) return ("\\fs%d"):format(math.max(1, n * k)) end
+  local function bord(n) return ("\\bord%.1f"):format(n * k) end
+  local font = "\\fnJetBrainsMono Nerd Font\\shad0"
+  local ev = {}
+  if typing then -- cover the frozen prompt with the live one
+    ev[#ev + 1] = ("{\\an7%s\\p1\\bord0\\1c&H%s&}m 0 0 l %d 0 %d %d 0 %d{\\p0}")
+      :format(at(0, 0), bg, 1405 * k, 1405 * k, 42 * k, 42 * k)
+    ev[#ev + 1] = ("{\\an7%s%s\\bord0\\1c&H%s&%s}%s")
+      :format(at(22, 12), fs(25), accent, font, ass_text(prompt_line))
+  end
+  ev[#ev + 1] = ("{\\an5%s%s%s\\1c&H%s&\\3c&H%s&%s}❚❚ PAUSED")
+    :format(at(710, 325), fs(84), bord(8), accent, bg, font)
+  ev[#ev + 1] = ("{\\an5%s%s%s\\1c&H%s&\\3c&H%s&%s}[SPACE] resume%s")
+    :format(at(710, 400), fs(28), bord(6), accent, bg, font, typing and "   [ENTER] play search" or "")
+  overlay.data = table.concat(ev, "\n")
+  overlay:update()
+end
+
 local function render()
   local shown = text
   local cs = chars(text)
   if #cs > MAX_SHOWN then -- keep the end of a long query visible
     shown = "…" .. table.concat(cs, "", #cs - MAX_SHOWN + 2)
   end
-  put("prompt.txt", ("root@%s:~# ./php2shell --search \"%s%s\"\n")
-    :format(HOST, shown, cursor_on and CURSOR or " "))
+  prompt_line = ("root@%s:~# ./php2shell --search \"%s%s\""):format(HOST, shown, cursor_on and CURSOR or " ")
+  put("prompt.txt", prompt_line .. "\n")
+  if paused() then draw_overlay() end
 end
 
 local blink = mp.add_periodic_timer(0.5, function()
@@ -90,6 +140,7 @@ local function stop_typing()
   os.remove(path("typing"))
   put("prompt.txt", slurp("prompt.idle") or "")
   put("footer.txt", slurp("footer.idle") or "")
+  if paused() then draw_overlay() end
 end
 
 local function exists(name)
@@ -118,12 +169,14 @@ local function submit()
   local q = text:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
   stop_typing()
   if q == "" then return end
+  resume() -- the current song plays on while the new one is looked up
   request("load", q)
 end
 
 -- Tab: skip to the queued track if shuffle has one ready, else (re)start shuffle
 local function shuffle()
   if typing then return end
+  resume()
   local pos = mp.get_property_number("playlist-pos", 0)
   local count = mp.get_property_number("playlist-count", 0)
   if exists("shuffle") and count > pos + 1 then
@@ -144,6 +197,17 @@ local function paste()
   if clip ~= "" then add(clip) end
 end
 
+-- Space resumes whenever it's paused (a paused picture can't show typed spaces, and
+-- it must never look stuck); otherwise it types while searching, else pauses.
+local function space()
+  if paused() then resume()
+  elseif typing then add(" ")
+  else mp.set_property_bool("pause", true) end
+end
+
+mp.observe_property("pause", "bool", draw_overlay)
+mp.observe_property("osd-dimensions", "native", function() if paused() then draw_overlay() end end)
+
 -- keys ------------------------------------------------------------------------------
 local function key(name, k, fn)
   mp.add_forced_key_binding(k, "mviz-" .. name, fn, { repeatable = true })
@@ -154,16 +218,10 @@ mp.add_forced_key_binding("ANY_UNICODE", "mviz-type", function(e)
   if e.event == "up" then return end
   local c = e.key_text
   if not c or c == "" then return end
-  if c == " " and not typing then
-    mp.command("cycle pause")
-  else
-    add(c)
-  end
+  if c == " " then space() else add(c) end
 end, { complex = true })
 
-key("space", "SPACE", function()
-  if typing then add(" ") else mp.command("cycle pause") end
-end)
+key("space", "SPACE", space)
 key("enter", "ENTER", function() if typing then submit() end end)
 key("kp-enter", "KP_ENTER", function() if typing then submit() end end)
 key("backspace", "BS", function()
