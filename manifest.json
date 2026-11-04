@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bayrock.music-visualizer",
   "name": "Music Visualizer",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "author": "shojo.me",
   "license": "MIT",
   "description": "A 1337 hacker-terminal music visualizer inspired by php2shell, drawn in your Omarchy theme colors.",

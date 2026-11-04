@@ -13,15 +13,17 @@
 --   prompt.txt / footer.txt   displayed; owned by this script while typing
 --   prompt.idle / footer.idle what to show when not typing
 --   typing                    present while typing
---   request                   "<command>\n<source>\n<label>\n": load | shuffle | advance
+--   request                   "<command>\n<source>\n<label>\n": load | shuffle |
+--                             advance | prev | next
 --   shuffle                   present while in shuffle mode
+--   upnext                    the queued shuffle track: "<n>\t<title>\t<new|hist>\t<src>"
 --   loadfail                  written when a new track failed and the old one resumed
 --   colors                    "<accent> <background>" as RRGGBB, for the pause overlay
 --
 -- Pausing freezes the whole picture: the filter graph only makes frames while audio
 -- plays, so prompt.txt changes can't show up. While paused, an OSD overlay (which
--- mpv still draws on the frozen frame) says so and mirrors the search prompt, and
--- Space always resumes, even mid-search.
+-- mpv still draws on the frozen frame) says so and mirrors the search prompt, so
+-- typing works as usual: Space types a space mid-search, else it resumes.
 
 local mp = require "mp"
 local utils = require "mp.utils"
@@ -110,8 +112,9 @@ local function draw_overlay()
     :format(d.w / 2 - pw / 2, d.h / 2 - 115 * k, bord(2), bg, accent, pw, pw, ph, ph)
   ev[#ev + 1] = ("{\\an5%s%s\\bord0\\1c&H%s&%s}❚❚ PAUSED")
     :format(mid(-38), fs(84), accent, font)
-  ev[#ev + 1] = ("{\\an5%s%s\\bord0\\1c&H%s&%s}[SPACE] resume%s")
-    :format(mid(37), fs(28), accent, font, typing and "   [ENTER] play search" or "")
+  ev[#ev + 1] = ("{\\an5%s%s\\bord0\\1c&H%s&%s}%s")
+    :format(mid(37), fs(28), accent, font,
+      typing and "[ENTER] play search   [ESC] cancel" or "[SPACE] resume")
   overlay.data = table.concat(ev, "\n")
   overlay:update()
 end
@@ -180,16 +183,45 @@ local function submit()
   request("load", q)
 end
 
--- Tab: skip to the queued track if shuffle has one ready, else (re)start shuffle
+local function queued() -- in shuffle with the next track already loaded into mpv
+  local pos = mp.get_property_number("playlist-pos", 0)
+  local count = mp.get_property_number("playlist-count", 0)
+  return exists("shuffle") and count > pos + 1
+end
+
+-- Tab: skip to the queued random track if shuffle has one ready, else (re)start
+-- shuffle (also after going back, when the queued track is one you already heard)
 local function shuffle()
   if typing then return end
   resume()
-  local pos = mp.get_property_number("playlist-pos", 0)
-  local count = mp.get_property_number("playlist-count", 0)
-  if exists("shuffle") and count > pos + 1 then
+  if queued() and not (slurp("upnext") or ""):find("\thist\t") then
     mp.command("playlist-next")
   else
     request("shuffle")
+  end
+end
+
+-- Right: the next track (the queued one in shuffle; after going back, the one you
+-- came from; otherwise shuffle picks one)
+local function next_track()
+  if typing then return end
+  resume()
+  if queued() then mp.command("playlist-next") else request("next") end
+end
+
+-- Left: back to the start of the song; twice quickly: the previous track
+local DOUBLE = 0.5 -- seconds between the two presses
+local last_back = -1
+local function back()
+  if typing then return end
+  local now = mp.get_time()
+  if now - last_back < DOUBLE then
+    last_back = -1
+    resume()
+    request("prev")
+  else
+    last_back = now
+    mp.commandv("seek", "0", "absolute")
   end
 end
 
@@ -204,12 +236,11 @@ local function paste()
   if clip ~= "" then add(clip) end
 end
 
--- Space resumes whenever it's paused (a paused picture can't show typed spaces, and
--- it must never look stuck); otherwise it types while searching, else pauses.
+-- Space types a space while searching (the pause overlay shows the prompt even when
+-- the picture is frozen); otherwise it pauses / resumes.
 local function space()
-  if paused() then resume()
-  elseif typing then add(" ")
-  else mp.set_property_bool("pause", true) end
+  if typing then add(" ")
+  else mp.set_property_bool("pause", not paused()) end
 end
 
 mp.observe_property("pause", "bool", draw_overlay)
@@ -241,6 +272,9 @@ key("delete-word", "Ctrl+w", function()
   if typing then text = text:gsub("%s*[^%s]*$", ""); render() end
 end)
 key("shuffle", "TAB", shuffle)
+-- not repeatable: holding Left must not count as a double press
+mp.add_forced_key_binding("RIGHT", "mviz-next", next_track)
+mp.add_forced_key_binding("LEFT", "mviz-back", back)
 key("paste", "Ctrl+v", paste)
 key("paste-alt", "Shift+INS", paste)
 key("escape", "ESC", function()

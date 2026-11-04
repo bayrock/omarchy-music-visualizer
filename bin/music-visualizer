@@ -51,7 +51,9 @@ In the window:
     Backspace     delete a character       Ctrl+W    delete a word
     Ctrl+U        clear                    Ctrl+V    paste (links work too)
   Tab             shuffle: play a random track (again: skip to another)
-  Space           pause / resume (resumes even mid-search)
+  Right           next track (from a looped song: back to shuffle)
+  Left            replay from the start; twice quickly: previous track
+  Space           pause / resume (types a space while searching)
   Up/Down         volume
   F11             fullscreen (or double-click; Esc leaves it)
   Ctrl+Q          quit (or your toggle shortcut, or Super+W)
@@ -236,6 +238,34 @@ lookup() {
   [[ -n $LTITLE ]] || LTITLE=$(plain_title)
 }
 
+# --- track history (Left Left = previous track, Right = next) ----------------------
+# $RUN/history lists the tracks played, one "<source>\t<title>\t<shuffle n/total>"
+# per line (the source is looked up again on replay; the cache makes that quick),
+# and $RUN/histpos is the line playing now. Like a browser's back/forward: going
+# back and then playing something new drops what was ahead.
+tabless() { printf '%s' "${1//$'\t'/ }"; }
+hist_pos() { cat "$RUN/histpos" 2>/dev/null || echo 0; }
+hist_count() { wc -l <"$RUN/history" 2>/dev/null || echo 0; }
+hist_push() { # hist_push <source> <title> [n/total]: a new track is playing
+  [[ -n $1 ]] || return
+  { head -n "$(hist_pos)" "$RUN/history" 2>/dev/null
+    printf '%s\t%s\t%s\n' "$(tabless "$1")" "$(tabless "$2")" "$3"
+  } | tail -n 200 >"$RUN/history.tmp" && mv -f "$RUN/history.tmp" "$RUN/history"
+  hist_count >"$RUN/histpos"
+}
+hist_read() { # hist_read <line> -> HSRC, HTITLE, HPOS
+  IFS=$'\t' read -r HSRC HTITLE HPOS < <(sed -n "${1}p" "$RUN/history" 2>/dev/null)
+  [[ -n $HSRC ]]
+}
+hist_queue() { # hist_queue <loadfile flags>: hand mpv the history entry after this one
+  local n=$(($(hist_pos) + 1))
+  ((n <= $(hist_count))) && hist_read "$n" && lookup "$HSRC" "$HTITLE" || return 1
+  jq -nc --arg u "$SRC" --arg f "$1" --arg t "$LTITLE" \
+    '{command: {name: "loadfile", url: $u, flags: $f, options: {"force-media-title": $t}}}' |
+    ipc >/dev/null
+  QPOS=$HPOS QTITLE=$LTITLE QSRC=$HSRC
+}
+
 # --- shuffle ------------------------------------------------------------------------
 # Shuffle plays random tracks from a playlist, each once before any repeats (a
 # shuffled "bag" in $RUN/bag). While one track plays, the next is looked up and
@@ -294,10 +324,18 @@ shuffle_pick() { # -> "<n>/<total><TAB><source>": the next track from the bag
   printf '%s/%s\t%s\n' "$n" "$(cat "$RUN/bagsize")" "$entry"
 }
 
+unqueue() { # a queued random pick that won't play next goes back on top of the bag
+  local pos title kind src
+  [[ -s $RUN/upnext ]] && IFS=$'\t' read -r pos title kind src <"$RUN/upnext"
+  [[ $kind == new && -n $src ]] || return
+  { printf '%s\n' "$src"; cat "$RUN/bag" 2>/dev/null; } >"$RUN/bag.tmp" && mv -f "$RUN/bag.tmp" "$RUN/bag"
+  echo $(($(cat "$RUN/bagn") - 1)) >"$RUN/bagn"
+}
+
 shuffle_status() { # shuffle_status <n/total> <next title> -> the header's status line
   local next=$2
   ((${#next} > 44)) && next="${next:0:43}…"
-  printf '[#] STAGE  SHUFFLE :: track %s :: next: %s' "$1" "$next"
+  printf '[#] STAGE  SHUFFLE :: track %s :: next: %s' "${1:-replay}" "$next"
 }
 
 queue_pick() { # queue_pick <loadfile flags>: look up a random track and hand it to mpv
@@ -308,18 +346,20 @@ queue_pick() { # queue_pick <loadfile flags>: look up a random track and hand it
     jq -nc --arg u "$SRC" --arg f "$1" --arg t "$LTITLE" \
       '{command: {name: "loadfile", url: $u, flags: $f, options: {"force-media-title": $t}}}' |
       ipc >/dev/null
-    QPOS=${pick%%$'\t'*} QTITLE=$LTITLE
+    QPOS=${pick%%$'\t'*} QTITLE=$LTITLE QSRC=${pick#*$'\t'}
     return 0
   done
   return 1
 }
 
 queue_upcoming() { # queue the track after the current one, and show it in the header
-  local title now
+  local title now kind=new
   title=$(head -1 "$RUN/label" 2>/dev/null)
   now=$(cat "$RUN/now" 2>/dev/null)
-  if queue_pick append-play; then
-    printf '%s\t%s\n' "$QPOS" "$QTITLE" >"$RUN/upnext"
+  # after going back (Left Left), what comes next is the track you came back from
+  if hist_queue append-play; then kind=hist; fi
+  if [[ $kind == hist ]] || queue_pick append-play; then
+    printf '%s\t%s\t%s\t%s\n' "$QPOS" "$(tabless "$QTITLE")" "$kind" "$QSRC" >"$RUN/upnext"
     write_labels "$title" "$(shuffle_status "$now" "$QTITLE")"
   else
     rm -f "$RUN/upnext"
@@ -340,6 +380,7 @@ shuffle_start() { # enter shuffle (or reshuffle): a random track now, the next q
     write_labels "$old" "[!] ERROR  shuffle: nothing in the playlist could be found"
     return
   fi
+  hist_push "$QSRC" "$QTITLE" "$QPOS"
   printf '%s\n' "$QPOS" >"$RUN/now"
   write_labels "$QTITLE" "$(shuffle_status "$QPOS" "resolving…")"
   set_title "$QTITLE"
@@ -348,9 +389,14 @@ shuffle_start() { # enter shuffle (or reshuffle): a random track now, the next q
 
 shuffle_advance() { # mpv moved on to the queued track (song ended, Tab or Next key)
   [[ -e $RUN/shuffle && -s $RUN/upnext ]] || return
-  local pos title
-  IFS=$'\t' read -r pos title <"$RUN/upnext"
+  local pos title kind src
+  IFS=$'\t' read -r pos title kind src <"$RUN/upnext"
   rm -f "$RUN/upnext"
+  if [[ $kind == hist ]]; then
+    echo $(($(hist_pos) + 1)) >"$RUN/histpos"
+  else
+    hist_push "$src" "$title" "$pos"
+  fi
   printf '%s\n' '{"command":["playlist-clear"]}' | ipc >/dev/null # drop played tracks
   printf '%s\n' "$pos" >"$RUN/now"
   write_labels "$title" "$(shuffle_status "$pos" "resolving…")"
@@ -384,6 +430,8 @@ else
     NEED_TITLE=1
   fi
 fi
+# the first track starts the history (a title still to be learned is looked up on replay)
+if [[ -n $NEED_TITLE ]]; then hist_push "$SHOWN" "" "$NOWPOS"; else hist_push "$SHOWN" "$LABEL" "$NOWPOS"; fi
 [[ -n $KEY && ! -e $SRC ]] && cache_bg
 (cache_trim) &
 
@@ -451,6 +499,11 @@ retheme() {
     }
   }' | ipc >/dev/null
   CUR=("${NEW[@]}")
+  # vf-command only changes the running filter. mpv rebuilds the --vf chain from the
+  # `vf` property on every new track, so store the new colors there too, or the
+  # next song would bring back the colors it opened with.
+  jq -nc --arg vf "@theme:colorchannelmixer=$(mixer "${CUR[@]}")" \
+    '{command: ["set_property", "vf", $vf]}' | ipc >/dev/null
   osd_colors
 }
 
@@ -513,22 +566,59 @@ load_track() {
     return
   fi
   title=$LTITLE
-  rm -f "$RUN/loadfail" "$RUN/shuffle" "$RUN/upnext"
-  jq -nc --arg u "$SRC" '{command: ["set_property", "loop-file", "inf"]}, {command: ["set_property", "pause", false]}, {command: ["loadfile", $u, "replace"]}' |
+  unqueue
+  rm -f "$RUN/shuffle"
+  play_now inf || { write_labels "$old" "[!] ERROR  $PLAYERR :: $q"; return; }
+  hist_push "$q" "$title" ""
+  write_labels "$title"
+  set_title "$title"
+}
+
+# play_now <loop-file>: switch mpv to the looked-up $SRC/$LTITLE right away and wait
+# until it plays. Fails (with PLAYERR) if mpv couldn't play it: search.lua has then
+# gone back to the previous track.
+play_now() {
+  local _
+  rm -f "$RUN/loadfail" "$RUN/upnext"
+  jq -nc --arg u "$SRC" --arg l "$1" --arg t "$LTITLE" '{command: ["set_property", "loop-file", $l]},
+    {command: ["set_property", "pause", false]},
+    {command: {name: "loadfile", url: $u, flags: "replace", options: {"force-media-title": $t}}}' |
     ipc >/dev/null
   for _ in $(seq 1 80); do
     sleep 0.25
-    if [[ -e $RUN/loadfail ]]; then
-      write_labels "$old" "[!] ERROR  couldn't play :: $q"
-      return
-    fi
-    if [[ $(ipc_get path) == "$SRC" && -n $(ipc_get playback-time) ]]; then
-      write_labels "$title"
-      set_title "$title"
-      return
-    fi
+    [[ -e $RUN/loadfail ]] && { PLAYERR="couldn't play"; return 1; }
+    [[ $(ipc_get path) == "$SRC" && -n $(ipc_get playback-time) ]] && return 0
   done
-  write_labels "$old" "[!] ERROR  timed out :: $q"
+  PLAYERR="timed out"
+  return 1
+}
+
+# hist_go <-1|1>: play the previous or next track in the history, staying in shuffle
+# or loop mode. Right past the end of the history moves on in shuffle (or starts it).
+hist_go() {
+  local n=$(($(hist_pos) + $1)) old what=previous loop=inf
+  ((n >= 1)) || return
+  if ((n > $(hist_count))); then shuffle_start; return; fi
+  hist_read "$n" || return
+  (($1 > 0)) && what=next
+  [[ -e $RUN/shuffle ]] && loop=no
+  old=$(head -1 "$RUN/label" 2>/dev/null)
+  write_labels "$old" "[~] SEEK   $what track :: ${HTITLE:-$HSRC}"
+  if ! lookup "$HSRC" "$HTITLE"; then
+    write_labels "$old" "[!] ERROR  no match :: ${HTITLE:-$HSRC}"
+    return
+  fi
+  [[ $loop == no ]] && unqueue
+  play_now "$loop" || { write_labels "$old" "[!] ERROR  $PLAYERR :: $LTITLE"; return; }
+  echo "$n" >"$RUN/histpos"
+  set_title "$LTITLE"
+  if [[ $loop == no ]]; then
+    printf '%s\n' "$HPOS" >"$RUN/now"
+    write_labels "$LTITLE" "$(shuffle_status "$HPOS" "resolving…")"
+    queue_upcoming
+  else
+    write_labels "$LTITLE"
+  fi
 }
 
 stop_load() { # cancel an in-progress track switch (and its yt-dlp lookup)
@@ -543,6 +633,8 @@ stop_load() { # cancel an in-progress track switch (and its yt-dlp lookup)
 #   load     play <source> (typed search, summon, play)
 #   shuffle  start shuffle, or skip to a new random track (Tab)
 #   advance  mpv moved on to the queued shuffle track
+#   prev     play the previous track (Left Left)
+#   next     play the next track (Right, when mpv has none queued)
 on_load() {
   local req=() cmd
   [[ -s $RUN/request ]] && mapfile -t req <"$RUN/request"
@@ -550,11 +642,11 @@ on_load() {
   cmd=${req[0]}
   case $cmd in
     load) [[ -n ${req[1]} ]] || return ;;
-    shuffle | advance) ;;
+    shuffle | advance | prev | next) ;;
     *) return ;;
   esac
-  # a song you searched for wins over shuffle moving on in the meantime
-  if [[ $cmd == advance && $LOADKIND == load ]] && kill -0 "$LOADPID" 2>/dev/null; then return; fi
+  # a song you picked wins over shuffle moving on in the meantime
+  if [[ $cmd == advance && $LOADKIND =~ ^(load|prev|next)$ ]] && kill -0 "$LOADPID" 2>/dev/null; then return; fi
   [[ -n $TITLEPID ]] && kill "$TITLEPID" 2>/dev/null
   TITLEPID=""
   stop_load
@@ -562,6 +654,8 @@ on_load() {
     load) load_track "${req[1]}" "${req[2]}" & ;;
     shuffle) shuffle_start & ;;
     advance) shuffle_advance & ;;
+    prev) hist_go -1 & ;;
+    next) hist_go 1 & ;;
   esac
   LOADPID=$! LOADKIND=$cmd
 }

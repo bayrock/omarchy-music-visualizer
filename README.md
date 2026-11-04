@@ -10,8 +10,9 @@ themes while it plays and the colors fade smoothly to the new palette.
 ![Music Visualizer in the Matte Black theme](preview.png)
 
 - **Shuffle out of the box:** opens into a hacker-trance mix (trance anthems
-  plus Hackers and Matrix soundtrack cuts). Press <kbd>Tab</kbd> to skip, or
-  shuffle your own playlist or music folder.
+  plus Hackers and Matrix soundtrack cuts). Press <kbd>Tab</kbd> or
+  <kbd>→</kbd> to skip and <kbd>←</kbd> <kbd>←</kbd> to go back, or shuffle
+  your own playlist or music folder.
 - **Type to change the song:** start typing in the window and your search
   appears in the hacker prompt. Press <kbd>Enter</kbd> and it plays.
 - **Plays almost anything:** a YouTube or SoundCloud link, a local audio file,
@@ -72,10 +73,15 @@ once before any repeats. The header shows where you are and what's coming:
 [#] STAGE  SHUFFLE :: track 7/40 :: next: Orbital - Halcyon On and On
 ```
 
-- <kbd>Tab</kbd> or the Next media key skips to the next track. The next one
-  is looked up while the current one plays, so there's no gap.
+- <kbd>Tab</kbd>, <kbd>→</kbd> or the Next media key skips to the next track.
+  The next one is looked up while the current one plays, so there's no gap.
+- <kbd>←</kbd> replays the song from the start. Press it twice quickly to go
+  back to the previous track. After going back, <kbd>→</kbd> (or the song
+  ending) returns to the track you came from, while <kbd>Tab</kbd> plays a new
+  random one.
 - Searching for a song (below) leaves shuffle and loops your song.
-  <kbd>Tab</kbd> goes back to shuffle.
+  <kbd>Tab</kbd> goes back to shuffle. <kbd>←</kbd> <kbd>←</kbd> and
+  <kbd>→</kbd> step through the songs you've played this session.
 - The built-in playlist, **hacker-trance**, is classic trance anthems (ATB,
   Paul van Dyk, Gouryella, System F...) plus hacker-film soundtrack cuts
   (Orbital, Propellerheads, Juno Reactor, Daft Punk's Tron...). See
@@ -114,7 +120,9 @@ because they're cached.
 | <kbd>Backspace</kbd> · <kbd>Ctrl</kbd>+<kbd>W</kbd> · <kbd>Ctrl</kbd>+<kbd>U</kbd> | delete a character · a word · everything |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste (links work too) |
 | <kbd>Tab</kbd> | shuffle: play a random track, or skip to the next one |
-| <kbd>Space</kbd> | pause / resume (while searching it types a space, unless paused) |
+| <kbd>→</kbd> | next track (in a looped song: back to shuffle) |
+| <kbd>←</kbd> · <kbd>←</kbd> <kbd>←</kbd> | replay from the start · previous track |
+| <kbd>Space</kbd> | pause / resume (while searching it types a space, even when paused) |
 | <kbd>↑</kbd> / <kbd>↓</kbd> | volume |
 | <kbd>F11</kbd> or double-click | fullscreen |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | quit (your shortcut and <kbd>Super</kbd>+<kbd>W</kbd> also close it) |
@@ -218,8 +226,11 @@ rm -rf ~/.cache/music-visualizer ~/.config/music-visualizer
 - **Typing does nothing.** Click the visualizer window first so it has keyboard
   focus.
 - **The picture froze.** It's paused: a "PAUSED" sign shows, and
-  <kbd>Space</kbd> resumes. (Before 1.3.1 there was no sign, and typing while
-  paused turned <kbd>Space</kbd> into a typed space.)
+  <kbd>Space</kbd> resumes. While you're typing a search, <kbd>Space</kbd>
+  types a space, so press <kbd>Enter</kbd> to play the search or
+  <kbd>Esc</kbd> to cancel it first.
+- **Colors went back to an old theme after the song changed.** Fixed in 1.4.0:
+  update the plugin.
 - **Shuffle shows `next: (lookup failed: Tab to retry)`.** A track couldn't be
   found, usually a connection hiccup. Press <kbd>Tab</kbd>. A track that won't
   play is skipped automatically.
@@ -251,7 +262,8 @@ and never copied. Nothing else leaves your machine.
   color-neutral mask, and a single `colorchannelmixer` maps it to your theme's
   background, accent, foreground and red.
 - **Theme changes:** the plugin watches the shell's theme colors. On a change,
-  it steps that mixer to the new palette over ~0.8 s through mpv's IPC socket.
+  it steps that mixer to the new palette over ~0.8 s through mpv's IPC socket,
+  then saves the new palette in mpv's `vf` setting so later tracks keep it.
   The audio is never touched.
 - **Search box:** `lua/search.lua` runs inside mpv and handles every key. While
   you type, it writes your text into the prompt line that the filter graph
@@ -263,13 +275,13 @@ and never copied. Nothing else leaves your machine.
 - **Pausing:** the filter graph only makes frames while audio plays, so a
   paused picture is frozen. `search.lua` then draws a "PAUSED" sign (on a
   see-through panel in the middle of the window) and the
-  live search prompt as an mpv OSD overlay (in your theme's accent color), and
-  <kbd>Space</kbd> always resumes. Playing a search or pressing <kbd>Tab</kbd>
-  resumes too.
+  live search prompt as an mpv OSD overlay (in your theme's accent color), so
+  you can keep typing. Playing a search or changing tracks resumes it.
 - **Shuffle:** the script keeps a shuffled list of the playlist and queues the
   next track in mpv's own playlist while the current one plays. `search.lua`
   tells the script when mpv moves on (track ended, <kbd>Tab</kbd>, or Next), and
-  the script queues the one after.
+  the script queues the one after. The script also keeps a list of the
+  tracks played this session for <kbd>←</kbd> <kbd>←</kbd> and <kbd>→</kbd>.
 - **Media keys:** the script loads Omarchy's `mpv-mpris` add-on, so the
   visualizer shows up as an MPRIS player with the track's real title.
 - **Safety:** mpv runs with `--no-config` (so your personal mpv setup can't
